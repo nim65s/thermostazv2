@@ -18,7 +18,7 @@ mod app {
     use stm32f1xx_hal::usb::{Peripheral, UsbBus, UsbBusType};
     use systick_monotonic::{fugit::Duration, Systick};
     use usb_device::prelude::*;
-    use sheusrb_lib::*;
+    use thermostazv2_lib::*;
 
     #[shared]
     struct Shared {
@@ -85,7 +85,7 @@ mod app {
 
         let usb_dev = UsbDeviceBuilder::new(
             unsafe { USB_BUS.as_ref().unwrap() },
-            UsbVidPid(0x6565, 0x0002),
+            UsbVidPid(0x6565, 0x0003),
         )
         .manufacturer("Nim")
         .product("thermostazv2")

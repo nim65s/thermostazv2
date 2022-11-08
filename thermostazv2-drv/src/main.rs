@@ -1,11 +1,11 @@
-use sheusrb_lib::*;
+use thermostazv2_lib::*;
 use std::io::Write;
 use std::time::Duration;
 use std::{io, thread};
 
 fn main() {
     // Open the first serialport available.
-    let mut port = serialport::new("/dev/sheusrb", 2_000_000)
+    let mut port = serialport::new("/dev/thermostazv2", 2_000_000)
         .open()
         .expect("Failed to open serial port");
 

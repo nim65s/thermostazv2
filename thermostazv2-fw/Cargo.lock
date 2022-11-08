@@ -477,7 +477,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "388a1df253eca08550bef6c72392cfe7c30914bf41df5269b68cbd6ff8f570a3"
 
 [[package]]
-name = "sheusrb-fw"
+name = "thermostazv2-fw"
 version = "0.1.0"
 dependencies = [
  "bincode",
@@ -487,7 +487,7 @@ dependencies = [
  "panic-rtt-target",
  "rtic-monotonic",
  "rtt-target",
- "sheusrb-lib",
+ "thermostazv2-lib",
  "stm32-usbd",
  "stm32f1 0.15.1",
  "stm32f1xx-hal",
@@ -497,7 +497,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "sheusrb-lib"
+name = "thermostazv2-lib"
 version = "0.1.0"
 dependencies = [
  "bincode",

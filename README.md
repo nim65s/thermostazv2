@@ -1,5 +1,5 @@
-# stm32f1xx-hal / example / usb-serial-rtic + bincode
+# Thermostazv2
 
-sheusrb for short.
+from sheusrb
 
 Exchange serialized rust enum / structs between a bluepill and a linux over USB

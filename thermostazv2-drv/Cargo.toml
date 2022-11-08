@@ -1,5 +1,5 @@
 [package]
-name = "sheusrb-drv"
+name = "thermostazv2-drv"
 version = "0.1.0"
 edition = "2021"
 
@@ -8,4 +8,4 @@ edition = "2021"
 [dependencies]
 bincode = { version = "2.0.0-rc", default-features = false, features = ["derive"] }
 serialport = "4.2.0"
-sheusrb-lib = { path = "../sheusrb-lib" }
+thermostazv2-lib = { path = "../thermostazv2-lib" }

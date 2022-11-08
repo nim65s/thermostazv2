@@ -1,5 +1,5 @@
 [package]
-name = "sheusrb-fw"
+name = "thermostazv2-fw"
 version = "0.1.0"
 edition = "2021"
 
@@ -19,4 +19,4 @@ stm32f1xx-hal = { version = "0.9.0", features = ["rtic", "stm32f103", "rt", "stm
 systick-monotonic = "1.0.0"
 usb-device = { version = "0.2.9" }
 usbd-serial = "0.1.1"
-sheusrb-lib = { path = "../sheusrb-lib" }
+thermostazv2-lib = { path = "../thermostazv2-lib" }
