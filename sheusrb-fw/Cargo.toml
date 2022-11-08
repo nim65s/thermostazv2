@@ -1,5 +1,5 @@
 [package]
-name = "stm32f1xx-hal-example-usb-serial-rtic"
+name = "sheusrb-fw"
 version = "0.1.0"
 edition = "2021"
 
@@ -19,3 +19,4 @@ stm32f1xx-hal = { version = "0.9.0", features = ["rtic", "stm32f103", "rt", "stm
 systick-monotonic = "1.0.0"
 usb-device = { version = "0.2.9" }
 usbd-serial = "0.1.1"
+sheusrb-lib = { path = "../sheusrb-lib" }

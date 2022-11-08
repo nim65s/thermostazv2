@@ -1,3 +1,5 @@
+#![no_std]
+
 use bincode::{Decode, Encode};
 
 #[derive(Encode, Decode, Debug, Eq, PartialEq)]

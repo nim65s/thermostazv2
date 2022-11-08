@@ -8,8 +8,6 @@
 //use panic_probe as _;
 use panic_rtt_target as _;
 
-mod data;
-
 #[rtic::app(device = stm32f1xx_hal::pac, peripherals = true, dispatchers = [SPI1])]
 mod app {
     use cortex_m::asm::delay;
@@ -20,8 +18,7 @@ mod app {
     use stm32f1xx_hal::usb::{Peripheral, UsbBus, UsbBusType};
     use systick_monotonic::{fugit::Duration, Systick};
     use usb_device::prelude::*;
-
-    use crate::data::*;
+    use sheusrb_lib::*;
 
     #[shared]
     struct Shared {
