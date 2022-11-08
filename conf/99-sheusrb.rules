@@ -1,0 +1,1 @@
+ACTION=="add", ATTRS{idVendor}=="6565", ATTRS{idProduct}=="0002", MODE="0666", SYMLINK+="sheusrb"
