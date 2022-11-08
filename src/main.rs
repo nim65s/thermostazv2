@@ -122,19 +122,6 @@ mod app {
         )
     }
 
-    #[task(binds = USB_HP_CAN_TX, shared = [usb_dev, serial])]
-    fn usb_tx(cx: usb_tx::Context) {
-        let mut usb_dev = cx.shared.usb_dev;
-        let mut serial = cx.shared.serial;
-
-        (&mut usb_dev, &mut serial).lock(|usb_dev, serial| {
-            if !usb_dev.poll(&mut [serial]) {
-                return;
-            }
-            serial.write(&[b'o', b'k', b'\n']).ok();
-        });
-    }
-
     #[task(capacity = 3, shared = [data])]
     fn decode(cx: decode::Context, buf: [u8; 32], count: usize) {
         let conf = bincode::config::standard();
@@ -155,6 +142,27 @@ mod app {
             )
             .unwrap();
             rprintln!("encoded {} : {:?}", size, buf);
+        });
+    }
+
+    #[task(binds = USB_HP_CAN_TX, shared = [usb_dev, serial])]
+    fn usb_tx(cx: usb_tx::Context) {
+        let mut usb_dev = cx.shared.usb_dev;
+        let mut serial = cx.shared.serial;
+
+        (&mut usb_dev, &mut serial).lock(|usb_dev, serial| {
+            if !usb_dev.poll(&mut [serial]) {
+                return;
+            }
+
+            let mut buf = [0u8; 32];
+
+            match serial.read(&mut buf) {
+                Ok(count) if count > 0 => {
+                    decode::spawn(buf, count).unwrap();
+                }
+                _ => {}
+            }
         });
     }
 
