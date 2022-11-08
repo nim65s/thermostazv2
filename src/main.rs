@@ -202,7 +202,7 @@ mod app {
             C::A(a) => a.stop ^= true,
             C::B(b) => b.meas.stop ^= true,
         });
-        encode::spawn().unwrap();
+        //encode::spawn().unwrap();
         blink::spawn_after(Duration::<u64, 1, 1000>::from_ticks(1000)).unwrap();
     }
 }

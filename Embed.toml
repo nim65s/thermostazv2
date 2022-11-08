@@ -6,6 +6,7 @@ chip = "STM32F103C8"
 [default.rtt]
 enabled = true
 show_timestamps = true
+log_enabled = true
 
 [default.gdb]
 # Whether or not a GDB server should be opened after flashing.
