@@ -1,59 +1,66 @@
-use thermostazv2_lib::*;
+use bincode::{Decode, Encode};
 use std::io::Write;
+use std::thread;
 use std::time::Duration;
-use std::{io, thread};
+
+use thermostazv2_lib::{Cmd, Relay, SensorOk, SensorResult};
+
+struct SerialCodec {
+    serial: Box<dyn serialport::SerialPort>,
+}
+
+impl bincode::enc::write::Writer for SerialCodec {
+    fn write(&mut self, bytes: &[u8]) -> Result<(), bincode::error::EncodeError> {
+        self.serial
+            .write_all(bytes)
+            .expect("Failed to write to serial port");
+        Ok(())
+    }
+}
+
+impl bincode::de::read::Reader for SerialCodec {
+    fn read(&mut self, bytes: &mut [u8]) -> Result<(), bincode::error::DecodeError> {
+        self.serial.read_exact(bytes).unwrap();
+        Ok(())
+    }
+}
 
 fn main() {
-    // Open the first serialport available.
-    let mut port = serialport::new("/dev/thermostazv2", 2_000_000)
+    let port = serialport::new("/dev/thermostazv2", 2_000_000)
         .open()
         .expect("Failed to open serial port");
 
-    // Clone the port
-    let mut clone = port.try_clone().expect("Failed to clone");
+    let clone = port.try_clone().expect("Failed to clone");
 
-    // Send out 4 bytes every second
+    // writer thread
     thread::spawn(move || {
-        let mut data = C::B(B {
-            goal: A {
-                stop: true,
-                pose: 42,
-            },
-            meas: A {
-                stop: false,
-                pose: 255,
-            },
-        });
+        let mut data = Cmd::Status(Relay::Closed, SensorResult::Ok(SensorOk { h: 32, t: 45 }));
         let config = bincode::config::standard();
+        let serial_encoder = SerialCodec { serial: clone };
+        let mut encoder = bincode::enc::EncoderImpl::new(serial_encoder, config);
         loop {
-            match &mut data {
-                C::A(a) => a.stop ^= true,
-                C::B(b) => {
-                    b.meas.stop ^= true;
-                    b.meas.pose = if b.meas.pose > 100 { 42 } else { 255 }
-                }
+            if let Cmd::Status(r, s) = data {
+                data = Cmd::Status(
+                    if r == Relay::Closed {
+                        Relay::Open
+                    } else {
+                        Relay::Closed
+                    },
+                    s,
+                );
             }
-            let mut slice = [0u8; 100];
-            let length = bincode::encode_into_slice(&data, &mut slice, config).unwrap();
-
-            clone
-                .write_all(&slice[..length])
-                .expect("Failed to write to serial port");
+            data.encode(&mut encoder).unwrap();
             thread::sleep(Duration::from_millis(100));
         }
     });
 
-    // Read the four bytes back from the cloned port
-    let mut buffer: [u8; 1] = [0; 1];
+    let config = bincode::config::standard();
+    let serial_decoder = SerialCodec { serial: port };
+    let mut decoder = bincode::de::DecoderImpl::new(serial_decoder, config);
+
+    // reader (main) thread
     loop {
-        match port.read(&mut buffer) {
-            Ok(bytes) => {
-                if bytes == 1 {
-                    println!("Received: {:?}", buffer);
-                }
-            }
-            Err(ref e) if e.kind() == io::ErrorKind::TimedOut => (),
-            Err(e) => eprintln!("{:?}", e),
-        }
+        let data = Cmd::decode(&mut decoder).unwrap();
+        println!("received {:?}", data);
     }
 }

@@ -17,14 +17,14 @@ mod app {
     use stm32f1xx_hal::prelude::*;
     use stm32f1xx_hal::usb::{Peripheral, UsbBus, UsbBusType};
     use systick_monotonic::{fugit::Duration, Systick};
-    use usb_device::prelude::*;
     use thermostazv2_lib::*;
+    use usb_device::prelude::*;
 
     #[shared]
     struct Shared {
         usb_dev: UsbDevice<'static, UsbBusType>,
         serial: usbd_serial::SerialPort<'static, UsbBusType>,
-        data: C,
+        data: Cmd,
     }
 
     #[local]
@@ -93,16 +93,7 @@ mod app {
         .device_class(usbd_serial::USB_CLASS_CDC)
         .build();
 
-        let data = C::B(B {
-            goal: A {
-                stop: true,
-                pose: 42,
-            },
-            meas: A {
-                stop: false,
-                pose: 255,
-            },
-        });
+        let data = Cmd::Status(Relay::Closed, SensorResult::Ok(SensorOk { h: 32, t: 45 }));
         let led = gpioc
             .pc13
             .into_push_pull_output_with_state(&mut gpioc.crh, PinState::Low);
@@ -122,7 +113,7 @@ mod app {
     #[task(capacity = 3, shared = [data])]
     fn decode(cx: decode::Context, buf: [u8; 32], count: usize) {
         let conf = bincode::config::standard();
-        let (decoded, size): (C, usize) = bincode::decode_from_slice(&buf, conf).unwrap();
+        let (decoded, size): (Cmd, usize) = bincode::decode_from_slice(&buf, conf).unwrap();
         rprintln!("decode {} / {}: {:?}", size, count, decoded);
         let mut data = cx.shared.data;
         data.lock(|data| *data = decoded);
@@ -134,7 +125,7 @@ mod app {
         data.lock(|data| {
             let conf = bincode::config::standard();
             let mut buf = [0u8; 32];
-            let size = bincode::encode_into_slice::<&C, bincode::config::Configuration>(
+            let size = bincode::encode_into_slice::<&Cmd, bincode::config::Configuration>(
                 data, &mut buf, conf,
             )
             .unwrap();
@@ -195,9 +186,14 @@ mod app {
         }
 
         let mut data = cx.shared.data;
-        data.lock(|data| match data {
-            C::A(a) => a.stop ^= true,
-            C::B(b) => b.meas.stop ^= true,
+        data.lock(|data| {
+            if let Cmd::Status(r, _) = data {
+                *r = if *r == Relay::Closed {
+                    Relay::Open
+                } else {
+                    Relay::Closed
+                };
+            }
         });
         //encode::spawn().unwrap();
         blink::spawn_after(Duration::<u64, 1, 1000>::from_ticks(1000)).unwrap();

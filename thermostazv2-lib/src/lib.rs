@@ -2,20 +2,46 @@
 
 use bincode::{Decode, Encode};
 
+/// Sensor: AHT20
+
 #[derive(Encode, Decode, Debug, Eq, PartialEq)]
-pub struct A {
-    pub stop: bool,
-    pub pose: u16,
+pub struct SensorOk {
+    pub h: u32,
+    pub t: u32,
+}
+
+impl SensorOk {
+    pub fn rh(&self) -> f32 {
+        100.0 * (self.h as f32) / ((1 << 20) as f32)
+    }
+    pub fn celsius(&self) -> f32 {
+        (200.0 * (self.t as f32) / ((1 << 20) as f32)) - 50.0
+    }
 }
 
 #[derive(Encode, Decode, Debug, Eq, PartialEq)]
-pub struct B {
-    pub goal: A,
-    pub meas: A,
+pub enum SensorErr {
+    Uncalibrated,
+    Bus,
+    CheckSum,
 }
 
 #[derive(Encode, Decode, Debug, Eq, PartialEq)]
-pub enum C {
-    A(A),
-    B(B),
+pub enum SensorResult {
+    Err(SensorErr),
+    Ok(SensorOk),
+}
+
+#[derive(Encode, Decode, Debug, Eq, PartialEq)]
+pub enum Relay {
+    Open,
+    Closed,
+    Batman,
+}
+
+#[derive(Encode, Decode, Debug, Eq, PartialEq)]
+pub enum Cmd {
+    Get,
+    Set(Relay),
+    Status(Relay, SensorResult),
 }

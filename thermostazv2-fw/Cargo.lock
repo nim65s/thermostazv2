@@ -477,33 +477,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "388a1df253eca08550bef6c72392cfe7c30914bf41df5269b68cbd6ff8f570a3"
 
 [[package]]
-name = "thermostazv2-fw"
-version = "0.1.0"
-dependencies = [
- "bincode",
- "cortex-m",
- "cortex-m-rt",
- "cortex-m-rtic",
- "panic-rtt-target",
- "rtic-monotonic",
- "rtt-target",
- "thermostazv2-lib",
- "stm32-usbd",
- "stm32f1 0.15.1",
- "stm32f1xx-hal",
- "systick-monotonic",
- "usb-device",
- "usbd-serial",
-]
-
-[[package]]
-name = "thermostazv2-lib"
-version = "0.1.0"
-dependencies = [
- "bincode",
-]
-
-[[package]]
 name = "spin"
 version = "0.9.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -594,6 +567,33 @@ dependencies = [
  "cortex-m",
  "fugit",
  "rtic-monotonic",
+]
+
+[[package]]
+name = "thermostazv2-fw"
+version = "0.1.0"
+dependencies = [
+ "bincode",
+ "cortex-m",
+ "cortex-m-rt",
+ "cortex-m-rtic",
+ "panic-rtt-target",
+ "rtic-monotonic",
+ "rtt-target",
+ "stm32-usbd",
+ "stm32f1 0.15.1",
+ "stm32f1xx-hal",
+ "systick-monotonic",
+ "thermostazv2-lib",
+ "usb-device",
+ "usbd-serial",
+]
+
+[[package]]
+name = "thermostazv2-lib"
+version = "0.1.0"
+dependencies = [
+ "bincode",
 ]
 
 [[package]]
