@@ -43,5 +43,6 @@ pub enum Relay {
 pub enum Cmd {
     Get,
     Set(Relay),
+    Sensor(SensorResult),
     Status(Relay, SensorResult),
 }

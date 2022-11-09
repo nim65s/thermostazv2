@@ -5,26 +5,33 @@
 #![no_std]
 #![allow(non_snake_case)]
 
-//use panic_probe as _;
 use panic_rtt_target as _;
+
+mod aht20rtic;
 
 #[rtic::app(device = stm32f1xx_hal::pac, peripherals = true, dispatchers = [SPI1])]
 mod app {
+    use crate::aht20rtic::{Aht20Rtic, Error};
     use cortex_m::asm::delay;
     use rtt_target::{rprintln, rtt_init_print};
     use stm32f1xx_hal::gpio::PinState;
-    use stm32f1xx_hal::gpio::{gpioc::PC13, Output, PushPull};
+    use stm32f1xx_hal::gpio::{Alternate, OpenDrain, Output, PushPull, PB6, PB7, PC13};
+    use stm32f1xx_hal::i2c::{BlockingI2c, DutyCycle, Mode};
+    use stm32f1xx_hal::pac::I2C1;
     use stm32f1xx_hal::prelude::*;
     use stm32f1xx_hal::usb::{Peripheral, UsbBus, UsbBusType};
     use systick_monotonic::{fugit::Duration, Systick};
     use thermostazv2_lib::*;
     use usb_device::prelude::*;
 
+    type I2c = BlockingI2c<I2C1, (PB6<Alternate<OpenDrain>>, PB7<Alternate<OpenDrain>>)>;
+
     #[shared]
     struct Shared {
         usb_dev: UsbDevice<'static, UsbBusType>,
         serial: usbd_serial::SerialPort<'static, UsbBusType>,
         data: Cmd,
+        aht20rtic: Aht20Rtic<I2c>,
     }
 
     #[local]
@@ -58,6 +65,7 @@ mod app {
         rprintln!("hello");
 
         let mut gpioa = cx.device.GPIOA.split();
+        let mut gpiob = cx.device.GPIOB.split();
         let mut gpioc = cx.device.GPIOC.split();
 
         // BluePill board has a pull-up resistor on the D+ line.
@@ -93,17 +101,40 @@ mod app {
         .device_class(usbd_serial::USB_CLASS_CDC)
         .build();
 
+        let scl = gpiob.pb6.into_alternate_open_drain(&mut gpiob.crl);
+        let sda = gpiob.pb7.into_alternate_open_drain(&mut gpiob.crl);
+        let mut afio = cx.device.AFIO.constrain();
+
+        let i2c = BlockingI2c::i2c1(
+            cx.device.I2C1,
+            (scl, sda),
+            &mut afio.mapr,
+            Mode::Fast {
+                frequency: 400.kHz(),
+                duty_cycle: DutyCycle::Ratio16to9,
+            },
+            clocks,
+            1000,
+            10,
+            1000,
+            1000,
+        );
+
+        let aht20rtic = Aht20Rtic::new(i2c).unwrap();
+
         let data = Cmd::Status(Relay::Closed, SensorResult::Ok(SensorOk { h: 32, t: 45 }));
         let led = gpioc
             .pc13
             .into_push_pull_output_with_state(&mut gpioc.crh, PinState::Low);
         blink::spawn_after(Duration::<u64, 1, 1000>::from_ticks(1000)).unwrap();
+        wait_calibrate::spawn_after(Duration::<u64, 1, 1000>::from_ticks(20)).unwrap();
 
         (
             Shared {
                 usb_dev,
                 serial,
                 data,
+                aht20rtic,
             },
             Local { led, state: false },
             init::Monotonics(mono),
@@ -111,12 +142,16 @@ mod app {
     }
 
     #[task(capacity = 3, shared = [data])]
-    fn decode(cx: decode::Context, buf: [u8; 32], count: usize) {
+    fn decode(_cx: decode::Context, buf: [u8; 32], count: usize) {
         let conf = bincode::config::standard();
         let (decoded, size): (Cmd, usize) = bincode::decode_from_slice(&buf, conf).unwrap();
         rprintln!("decode {} / {}: {:?}", size, count, decoded);
-        let mut data = cx.shared.data;
-        data.lock(|data| *data = decoded);
+        if decoded == Cmd::Get {
+            rprintln!("Got get");
+            start_read::spawn().unwrap();
+        }
+        //let mut data = cx.shared.data;
+        //data.lock(|data| *data = decoded);
     }
 
     #[task(capacity = 3, shared = [data])]
@@ -197,5 +232,76 @@ mod app {
         });
         //encode::spawn().unwrap();
         blink::spawn_after(Duration::<u64, 1, 1000>::from_ticks(1000)).unwrap();
+    }
+
+    #[task(shared = [aht20rtic])]
+    fn calibrate(cx: calibrate::Context) {
+        let mut aht20rtic = cx.shared.aht20rtic;
+        aht20rtic.lock(|aht20rtic| match aht20rtic.calibrated() {
+            Ok(_) => rprintln!("calibrated"),
+            Err(e) => rprintln!("NOT CALIBRATED: {:?}", e),
+        });
+    }
+
+    #[task(shared = [aht20rtic])]
+    fn wait_calibrate(cx: wait_calibrate::Context) {
+        let mut aht20rtic = cx.shared.aht20rtic;
+        aht20rtic.lock(|aht20rtic| {
+            if aht20rtic.busy().unwrap() {
+                wait_calibrate::spawn_after(Duration::<u64, 1, 1000>::from_ticks(10)).unwrap();
+            } else {
+                calibrate::spawn().unwrap();
+            }
+        });
+    }
+
+    #[task(shared = [aht20rtic])]
+    fn start_read(cx: start_read::Context) {
+        let mut aht20rtic = cx.shared.aht20rtic;
+        aht20rtic.lock(|aht20rtic| aht20rtic.start_read().unwrap());
+    }
+
+    #[task(shared = [aht20rtic])]
+    fn wait_read(cx: wait_read::Context) {
+        let mut aht20rtic = cx.shared.aht20rtic;
+        aht20rtic.lock(|aht20rtic| {
+            if aht20rtic.busy().unwrap() {
+                wait_read::spawn_after(Duration::<u64, 1, 1000>::from_ticks(10)).unwrap();
+            } else {
+                end_read::spawn().unwrap();
+            }
+        });
+    }
+
+    #[task(shared = [aht20rtic])]
+    fn end_read(cx: end_read::Context) {
+        let mut aht20rtic = cx.shared.aht20rtic;
+        aht20rtic.lock(|aht20rtic| {
+            let msg = match aht20rtic.end_read() {
+                Ok((h, t)) => SensorResult::Ok(SensorOk {
+                    h: h.raw(),
+                    t: t.raw(),
+                }),
+                Err(Error::Uncalibrated) => SensorResult::Err(SensorErr::Uncalibrated),
+                Err(Error::Checksum) => SensorResult::Err(SensorErr::CheckSum),
+                Err(Error::Bus(_)) => SensorResult::Err(SensorErr::Bus),
+            };
+            send::spawn(Cmd::Sensor(msg)).unwrap();
+        });
+    }
+
+    #[task(shared = [serial])]
+    fn send(cx: send::Context, cmd: Cmd) {
+        let mut serial = cx.shared.serial;
+        serial.lock(|serial| {
+            let conf = bincode::config::standard();
+            let mut buf = [0u8; 32];
+            let size = bincode::encode_into_slice::<&Cmd, bincode::config::Configuration>(
+                &cmd, &mut buf, conf,
+            )
+            .unwrap();
+            rprintln!("encoded {} : {:?}", size, buf);
+            serial.write(&buf[0..size]).ok();
+        });
     }
 }
