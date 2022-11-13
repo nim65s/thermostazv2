@@ -12,6 +12,7 @@ mod aht20rtic;
 #[rtic::app(device = stm32f1xx_hal::pac, peripherals = true, dispatchers = [SPI1, SPI2, SPI3, ADC1_2, ADC3, CAN_RX1, CAN_SCE])]
 mod app {
     use crate::aht20rtic::{Aht20Rtic, Error};
+    use bincode::{decode_from_slice, encode_into_slice};
     use cortex_m::asm::delay;
     use rtt_target::{rprintln, rtt_init_print};
     use stm32f1xx_hal::gpio::PinState;
@@ -32,6 +33,7 @@ mod app {
         serial: usbd_serial::SerialPort<'static, UsbBusType>,
         data: Cmd,
         aht20rtic: Aht20Rtic<I2c>,
+        relay: bool,
     }
 
     #[local]
@@ -41,6 +43,7 @@ mod app {
         header_index: usize,
         buffer: [u8; 32],
         buffer_index: usize,
+        buffer_size: usize,
     }
 
     #[monotonic(binds = SysTick, default = true)]
@@ -127,13 +130,14 @@ mod app {
         }
         let aht20rtic = aht20rtic.unwrap();
 
-        let data = Cmd::Status(Relay::Closed, SensorResult::Ok(SensorOk { h: 32, t: 45 }));
+        let data = Cmd::Status(Relay::Close, SensorResult::Ok(SensorOk { h: 32, t: 45 }));
         let led = gpioc
             .pc13
             .into_push_pull_output_with_state(&mut gpioc.crh, PinState::Low);
         blink::spawn_after(Duration::<u64, 1, 1000>::from_ticks(1000)).unwrap();
         wait_calibrate::spawn_after(Duration::<u64, 1, 1000>::from_ticks(20)).unwrap();
         rprintln!("init end");
+        let relay = false;
 
         (
             Shared {
@@ -141,6 +145,7 @@ mod app {
                 serial,
                 data,
                 aht20rtic,
+                relay,
             },
             Local {
                 led,
@@ -148,52 +153,56 @@ mod app {
                 header_index: 0,
                 buffer: [0; 32],
                 buffer_index: 0,
+                buffer_size: 0,
             },
             init::Monotonics(mono),
         )
     }
 
-    #[task(capacity = 3, local = [header_index, buffer, buffer_index])]
+    #[task(capacity = 3, local = [header_index, buffer, buffer_index, buffer_size])]
     fn decode(cx: decode::Context, buf: [u8; 32], count: usize) {
         let header_index = cx.local.header_index;
         let buffer = cx.local.buffer;
         let buffer_index = cx.local.buffer_index;
+        let buffer_size = cx.local.buffer_size;
 
         for &byte in &buf[..count] {
             if *header_index < HEADER.len() {
                 if byte == HEADER[*header_index] {
                     *header_index += 1;
                 } else {
+                    rprintln!("wrong header {}: {}", *header_index, byte);
                     *header_index = 0;
-                    rprintln!("wrong header");
-                }
-            } else {
-                if *header_index == HEADER.len() {
                     *buffer_index = 0;
-                    *header_index += 1;
+                    *buffer_size = 0;
                 }
+            } else if *header_index == HEADER.len() {
+                *buffer_index = 0;
+                *header_index += 1;
+                *buffer_size = byte.into();
+            } else {
                 buffer[*buffer_index] = byte;
                 *buffer_index += 1;
-                if *buffer_index >= 32 {
-                    *header_index = 0;
-                    rprintln!("couldn't parse {:?}", *buffer);
-                } else {
+                if *buffer_index == *buffer_size {
                     let conf = bincode::config::standard();
-                    if let Ok((cmd, _)) = bincode::decode_from_slice::<
-                        Cmd,
-                        bincode::config::Configuration,
-                    >(&buffer[..*buffer_index], conf)
-                    {
+                    if let Ok((cmd, _)) = decode_from_slice::<Cmd, bincode::config::Configuration>(
+                        &buffer[..*buffer_size],
+                        conf,
+                    ) {
                         //rprintln!("decode {} / {}: {:?}", size, count, cmd);
                         rprintln!("received {:?}", cmd);
                         match cmd {
                             Cmd::Get => start_read::spawn().unwrap(),
-                            Cmd::Ping => rprintln!("pong"),
-                            _ => {}
+                            Cmd::Ping => send::spawn(Cmd::Pong).unwrap(),
+                            Cmd::Set(r) => set_relay::spawn(r).unwrap(),
+                            _ => {} // TODO
                         }
-                        *header_index = 0;
-                        *buffer_index = 0;
+                    } else {
+                        rprintln!("Couldn't decode {:?}", &buffer[..*buffer_size]);
                     }
+                    *header_index = 0;
+                    *buffer_index = 0;
+                    *buffer_size = 0;
                 }
             }
         }
@@ -253,14 +262,25 @@ mod app {
         let mut data = cx.shared.data;
         data.lock(|data| {
             if let Cmd::Status(r, _) = data {
-                *r = if *r == Relay::Closed {
+                *r = if *r == Relay::Close {
                     Relay::Open
                 } else {
-                    Relay::Closed
+                    Relay::Close
                 };
             }
         });
         blink::spawn_after(Duration::<u64, 1, 1000>::from_ticks(1000)).unwrap();
+    }
+
+    #[task(shared = [relay])]
+    fn set_relay(cx: set_relay::Context, state: Relay) {
+        let mut relay = cx.shared.relay;
+        relay.lock(|relay| {
+            *relay = match state {
+                Relay::Open => false,
+                Relay::Close => true,
+            }
+        });
     }
 
     #[task(shared = [aht20rtic])]
@@ -328,10 +348,10 @@ mod app {
             serial.write(&HEADER).ok();
             let conf = bincode::config::standard();
             let mut buf = [0u8; 32];
-            let size = bincode::encode_into_slice::<&Cmd, bincode::config::Configuration>(
-                &cmd, &mut buf, conf,
-            )
-            .unwrap();
+            let size =
+                encode_into_slice::<&Cmd, bincode::config::Configuration>(&cmd, &mut buf, conf)
+                    .unwrap();
+            serial.write(&[size.try_into().unwrap()]).ok();
             //rprintln!("encoded {} : {:?}", size, buf);
             serial.write(&buf[0..size]).ok();
         });

@@ -35,14 +35,14 @@ pub enum SensorResult {
 #[derive(Encode, Decode, Debug, Eq, PartialEq)]
 pub enum Relay {
     Open,
-    Closed,
-    Batman,
+    Close,
 }
 
 #[derive(Encode, Decode, Debug, Eq, PartialEq)]
 pub enum Cmd {
     Get,
     Ping,
+    Pong,
     Set(Relay),
     Sensor(SensorResult),
     Status(Relay, SensorResult),
