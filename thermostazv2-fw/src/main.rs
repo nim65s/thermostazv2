@@ -9,7 +9,7 @@ use panic_rtt_target as _;
 
 mod aht20rtic;
 
-#[rtic::app(device = stm32f1xx_hal::pac, peripherals = true, dispatchers = [SPI1])]
+#[rtic::app(device = stm32f1xx_hal::pac, peripherals = true, dispatchers = [SPI1, SPI2, SPI3, ADC1_2, ADC3, CAN_RX1, CAN_SCE])]
 mod app {
     use crate::aht20rtic::{Aht20Rtic, Error};
     use cortex_m::asm::delay;
@@ -38,6 +38,9 @@ mod app {
     struct Local {
         led: PC13<Output<PushPull>>,
         state: bool,
+        header_index: usize,
+        buffer: [u8; 32],
+        buffer_index: usize,
     }
 
     #[monotonic(binds = SysTick, default = true)]
@@ -46,7 +49,7 @@ mod app {
     #[init]
     fn init(cx: init::Context) -> (Shared, Local, init::Monotonics) {
         rtt_init_print!();
-        rprintln!("hey");
+        rprintln!("init start");
         static mut USB_BUS: Option<usb_device::bus::UsbBusAllocator<UsbBusType>> = None;
 
         let mut flash = cx.device.FLASH.constrain();
@@ -61,8 +64,6 @@ mod app {
             .freeze(&mut flash.acr);
 
         assert!(clocks.usbclk_valid());
-
-        rprintln!("hello");
 
         let mut gpioa = cx.device.GPIOA.split();
         let mut gpiob = cx.device.GPIOB.split();
@@ -120,7 +121,11 @@ mod app {
             1000,
         );
 
-        let aht20rtic = Aht20Rtic::new(i2c).unwrap();
+        let aht20rtic = Aht20Rtic::new(i2c);
+        if aht20rtic.is_err() {
+            rprintln!("ahrt20 err");
+        }
+        let aht20rtic = aht20rtic.unwrap();
 
         let data = Cmd::Status(Relay::Closed, SensorResult::Ok(SensorOk { h: 32, t: 45 }));
         let led = gpioc
@@ -128,6 +133,7 @@ mod app {
             .into_push_pull_output_with_state(&mut gpioc.crh, PinState::Low);
         blink::spawn_after(Duration::<u64, 1, 1000>::from_ticks(1000)).unwrap();
         wait_calibrate::spawn_after(Duration::<u64, 1, 1000>::from_ticks(20)).unwrap();
+        rprintln!("init end");
 
         (
             Shared {
@@ -136,37 +142,76 @@ mod app {
                 data,
                 aht20rtic,
             },
-            Local { led, state: false },
+            Local {
+                led,
+                state: false,
+                header_index: 0,
+                buffer: [0; 32],
+                buffer_index: 0,
+            },
             init::Monotonics(mono),
         )
     }
 
-    #[task(capacity = 3, shared = [data])]
-    fn decode(_cx: decode::Context, buf: [u8; 32], count: usize) {
-        let conf = bincode::config::standard();
-        let (decoded, size): (Cmd, usize) = bincode::decode_from_slice(&buf, conf).unwrap();
-        rprintln!("decode {} / {}: {:?}", size, count, decoded);
-        if decoded == Cmd::Get {
-            rprintln!("Got get");
-            start_read::spawn().unwrap();
+    #[task(capacity = 3, local = [header_index, buffer, buffer_index])]
+    fn decode(cx: decode::Context, buf: [u8; 32], count: usize) {
+        let header_index = cx.local.header_index;
+        let buffer = cx.local.buffer;
+        let buffer_index = cx.local.buffer_index;
+
+        for &byte in &buf[..count] {
+            if *header_index < HEADER.len() {
+                if byte == HEADER[*header_index] {
+                    *header_index += 1;
+                } else {
+                    *header_index = 0;
+                    rprintln!("wrong header");
+                }
+            } else {
+                if *header_index == HEADER.len() {
+                    *buffer_index = 0;
+                    *header_index += 1;
+                }
+                buffer[*buffer_index] = byte;
+                *buffer_index += 1;
+                if *buffer_index >= 32 {
+                    *header_index = 0;
+                    rprintln!("couldn't parse {:?}", *buffer);
+                } else {
+                    let conf = bincode::config::standard();
+                    if let Ok((cmd, size)) = bincode::decode_from_slice::<
+                        Cmd,
+                        bincode::config::Configuration,
+                    >(&buffer[..*buffer_index], conf)
+                    {
+                        rprintln!("decode {} / {}: {:?}", size, count, cmd);
+                        if cmd == Cmd::Get {
+                            rprintln!("Got get");
+                            start_read::spawn().unwrap();
+                        } else {
+                            rprintln!("TODO: Got {:?}", cmd);
+                        }
+                        *header_index = 0;
+                        *buffer_index = 0;
+                    }
+                }
+            }
         }
-        //let mut data = cx.shared.data;
-        //data.lock(|data| *data = decoded);
     }
 
-    #[task(capacity = 3, shared = [data])]
-    fn encode(cx: encode::Context) {
-        let mut data = cx.shared.data;
-        data.lock(|data| {
-            let conf = bincode::config::standard();
-            let mut buf = [0u8; 32];
-            let size = bincode::encode_into_slice::<&Cmd, bincode::config::Configuration>(
-                data, &mut buf, conf,
-            )
-            .unwrap();
-            rprintln!("encoded {} : {:?}", size, buf);
-        });
-    }
+    //#[task(capacity = 3, shared = [data])]
+    //fn encode(cx: encode::Context) {
+    //let mut data = cx.shared.data;
+    //data.lock(|data| {
+    //let conf = bincode::config::standard();
+    //let mut buf = [0u8; 32];
+    //let size = bincode::encode_into_slice::<&Cmd, bincode::config::Configuration>(
+    //data, &mut buf, conf,
+    //)
+    //.unwrap();
+    //rprintln!("encoded {} : {:?}", size, buf);
+    //});
+    //}
 
     #[task(binds = USB_HP_CAN_TX, shared = [usb_dev, serial])]
     fn usb_tx(cx: usb_tx::Context) {
@@ -211,7 +256,6 @@ mod app {
 
     #[task(local = [led, state], shared = [data])]
     fn blink(cx: blink::Context) {
-        rprintln!("blink");
         if *cx.local.state {
             cx.local.led.set_high();
             *cx.local.state = false;
@@ -231,6 +275,7 @@ mod app {
             }
         });
         //encode::spawn().unwrap();
+        //start_read::spawn().unwrap();
         blink::spawn_after(Duration::<u64, 1, 1000>::from_ticks(1000)).unwrap();
     }
 
@@ -259,6 +304,7 @@ mod app {
     fn start_read(cx: start_read::Context) {
         let mut aht20rtic = cx.shared.aht20rtic;
         aht20rtic.lock(|aht20rtic| aht20rtic.start_read().unwrap());
+        wait_read::spawn_after(Duration::<u64, 1, 1000>::from_ticks(80)).unwrap();
     }
 
     #[task(shared = [aht20rtic])]
@@ -292,8 +338,10 @@ mod app {
 
     #[task(shared = [serial])]
     fn send(cx: send::Context, cmd: Cmd) {
+        rprintln!("send {:?}", cmd);
         let mut serial = cx.shared.serial;
         serial.lock(|serial| {
+            serial.write(&HEADER).ok();
             let conf = bincode::config::standard();
             let mut buf = [0u8; 32];
             let size = bincode::encode_into_slice::<&Cmd, bincode::config::Configuration>(
