@@ -179,17 +179,17 @@ mod app {
                     rprintln!("couldn't parse {:?}", *buffer);
                 } else {
                     let conf = bincode::config::standard();
-                    if let Ok((cmd, size)) = bincode::decode_from_slice::<
+                    if let Ok((cmd, _)) = bincode::decode_from_slice::<
                         Cmd,
                         bincode::config::Configuration,
                     >(&buffer[..*buffer_index], conf)
                     {
-                        rprintln!("decode {} / {}: {:?}", size, count, cmd);
-                        if cmd == Cmd::Get {
-                            rprintln!("Got get");
-                            start_read::spawn().unwrap();
-                        } else {
-                            rprintln!("TODO: Got {:?}", cmd);
+                        //rprintln!("decode {} / {}: {:?}", size, count, cmd);
+                        rprintln!("received {:?}", cmd);
+                        match cmd {
+                            Cmd::Get => start_read::spawn().unwrap(),
+                            Cmd::Ping => rprintln!("pong"),
+                            _ => {}
                         }
                         *header_index = 0;
                         *buffer_index = 0;
@@ -198,20 +198,6 @@ mod app {
             }
         }
     }
-
-    //#[task(capacity = 3, shared = [data])]
-    //fn encode(cx: encode::Context) {
-    //let mut data = cx.shared.data;
-    //data.lock(|data| {
-    //let conf = bincode::config::standard();
-    //let mut buf = [0u8; 32];
-    //let size = bincode::encode_into_slice::<&Cmd, bincode::config::Configuration>(
-    //data, &mut buf, conf,
-    //)
-    //.unwrap();
-    //rprintln!("encoded {} : {:?}", size, buf);
-    //});
-    //}
 
     #[task(binds = USB_HP_CAN_TX, shared = [usb_dev, serial])]
     fn usb_tx(cx: usb_tx::Context) {
@@ -274,8 +260,6 @@ mod app {
                 };
             }
         });
-        //encode::spawn().unwrap();
-        //start_read::spawn().unwrap();
         blink::spawn_after(Duration::<u64, 1, 1000>::from_ticks(1000)).unwrap();
     }
 
@@ -348,7 +332,7 @@ mod app {
                 &cmd, &mut buf, conf,
             )
             .unwrap();
-            rprintln!("encoded {} : {:?}", size, buf);
+            //rprintln!("encoded {} : {:?}", size, buf);
             serial.write(&buf[0..size]).ok();
         });
     }
