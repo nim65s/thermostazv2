@@ -130,7 +130,7 @@ fn main() {
     let thermostazv = Arc::new(Mutex::new(Thermostazv::new()));
     let thermostazv_clone = Arc::clone(&thermostazv);
     let status = Arc::new(Mutex::new(Cmd::Status(
-        Relay::Open,
+        Relay::Cold,
         SensorResult::Err(SensorErr::Uninitialized),
     )));
     let status_clone = Arc::clone(&status);
@@ -261,9 +261,9 @@ fn main() {
             let cmd = msg.payload_str();
             if topic == "/azv/thermostazv/cmd" {
                 if cmd == "c" {
-                    to_serial_send_clone.send(Cmd::Set(Relay::Close)).unwrap();
+                    to_serial_send_clone.send(Cmd::Set(Relay::Hot)).unwrap();
                 } else if cmd == "f" {
-                    to_serial_send_clone.send(Cmd::Set(Relay::Open)).unwrap();
+                    to_serial_send_clone.send(Cmd::Set(Relay::Cold)).unwrap();
                 } else if cmd == "s" {
                     to_mqtt_send_clone
                         .send(*status_clone.lock().unwrap())
@@ -286,9 +286,9 @@ fn main() {
                     to_serial_send_clone
                         .send(Cmd::Set(
                             if thermostazv.update(temperature.as_f64().unwrap()) {
-                                Relay::Close
+                                Relay::Hot
                             } else {
-                                Relay::Open
+                                Relay::Cold
                             },
                         ))
                         .unwrap();

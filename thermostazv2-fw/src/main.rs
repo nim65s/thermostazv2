@@ -31,7 +31,6 @@ mod app {
     struct Shared {
         usb_dev: UsbDevice<'static, UsbBusType>,
         serial: usbd_serial::SerialPort<'static, UsbBusType>,
-        data: Cmd,
         aht20rtic: Aht20Rtic<I2c>,
         relay: PB8<Output<PushPull>>,
         sensor: SensorResult,
@@ -132,7 +131,6 @@ mod app {
         }
         let aht20rtic = aht20rtic.unwrap();
 
-        let data = Cmd::Status(Relay::Close, SensorResult::Ok(SensorOk { h: 32, t: 45 }));
         let led = gpioc
             .pc13
             .into_push_pull_output_with_state(&mut gpioc.crh, PinState::Low);
@@ -153,7 +151,6 @@ mod app {
             Shared {
                 usb_dev,
                 serial,
-                data,
                 aht20rtic,
                 relay,
                 sensor,
@@ -263,7 +260,7 @@ mod app {
         });
     }
 
-    #[task(local = [led, state], shared = [data])]
+    #[task(local = [led, state])]
     fn blink(cx: blink::Context) {
         if *cx.local.state {
             cx.local.led.set_high();
@@ -273,16 +270,6 @@ mod app {
             *cx.local.state = true;
         }
 
-        let mut data = cx.shared.data;
-        data.lock(|data| {
-            if let Cmd::Status(r, _) = data {
-                *r = if *r == Relay::Close {
-                    Relay::Open
-                } else {
-                    Relay::Close
-                };
-            }
-        });
         blink::spawn_after(Duration::<u64, 1, 1000>::from_ticks(1000)).unwrap();
         //start_read::spawn().unwrap();
     }
@@ -291,8 +278,8 @@ mod app {
     fn set_relay(cx: set_relay::Context, state: Relay) {
         let mut relay = cx.shared.relay;
         relay.lock(|relay| match state {
-            Relay::Open => relay.set_low(),
-            Relay::Close => relay.set_high(),
+            Relay::Cold => relay.set_low(),
+            Relay::Hot => relay.set_high(),
         });
     }
 
@@ -363,9 +350,9 @@ mod app {
         (sensor, relay).lock(|sensor, relay| {
             let cmd = Cmd::Status(
                 if relay.is_set_high() {
-                    Relay::Open
+                    Relay::Hot
                 } else {
-                    Relay::Close
+                    Relay::Cold
                 },
                 *sensor,
             );

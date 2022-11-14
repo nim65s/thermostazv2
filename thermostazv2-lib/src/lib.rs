@@ -35,8 +35,8 @@ pub enum SensorResult {
 
 #[derive(Encode, Decode, Debug, Eq, PartialEq, Copy, Clone)]
 pub enum Relay {
-    Open,
-    Close,
+    Hot,
+    Cold,
 }
 
 #[derive(Encode, Decode, Debug, Eq, PartialEq, Copy, Clone)]
