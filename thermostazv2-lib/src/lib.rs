@@ -4,7 +4,7 @@ use bincode::{Decode, Encode};
 
 /// Sensor: AHT20
 
-#[derive(Encode, Decode, Debug, Eq, PartialEq)]
+#[derive(Encode, Decode, Debug, Eq, PartialEq, Copy, Clone)]
 pub struct SensorOk {
     pub h: u32,
     pub t: u32,
@@ -19,14 +19,15 @@ impl SensorOk {
     }
 }
 
-#[derive(Encode, Decode, Debug, Eq, PartialEq)]
+#[derive(Encode, Decode, Debug, Eq, PartialEq, Copy, Clone)]
 pub enum SensorErr {
     Uncalibrated,
     Bus,
     CheckSum,
+    Uninitialized,
 }
 
-#[derive(Encode, Decode, Debug, Eq, PartialEq)]
+#[derive(Encode, Decode, Debug, Eq, PartialEq, Copy, Clone)]
 pub enum SensorResult {
     Err(SensorErr),
     Ok(SensorOk),

@@ -16,7 +16,7 @@ mod app {
     use cortex_m::asm::delay;
     use rtt_target::{rprintln, rtt_init_print};
     use stm32f1xx_hal::gpio::PinState;
-    use stm32f1xx_hal::gpio::{Alternate, OpenDrain, Output, PushPull, PB6, PB7, PC13};
+    use stm32f1xx_hal::gpio::{Alternate, OpenDrain, Output, PushPull, PB6, PB7, PB8, PC13};
     use stm32f1xx_hal::i2c::{BlockingI2c, DutyCycle, Mode};
     use stm32f1xx_hal::pac::I2C1;
     use stm32f1xx_hal::prelude::*;
@@ -33,7 +33,8 @@ mod app {
         serial: usbd_serial::SerialPort<'static, UsbBusType>,
         data: Cmd,
         aht20rtic: Aht20Rtic<I2c>,
-        relay: bool,
+        relay: PB8<Output<PushPull>>,
+        sensor: SensorResult,
     }
 
     #[local]
@@ -76,8 +77,9 @@ mod app {
         // Pull the D+ pin down to send a RESET condition to the USB bus.
         // This forced reset is needed only for development, without it host
         // will not reset your device when you upload new firmware.
-        let mut usb_dp = gpioa.pa12.into_push_pull_output(&mut gpioa.crh);
-        usb_dp.set_low();
+        let usb_dp = gpioa
+            .pa12
+            .into_push_pull_output_with_state(&mut gpioa.crh, PinState::Low);
         delay(clocks.sysclk().raw() / 100);
 
         let usb_dm = gpioa.pa11;
@@ -137,7 +139,15 @@ mod app {
         blink::spawn_after(Duration::<u64, 1, 1000>::from_ticks(1000)).unwrap();
         wait_calibrate::spawn_after(Duration::<u64, 1, 1000>::from_ticks(20)).unwrap();
         rprintln!("init end");
-        let relay = false;
+
+        gpiob
+            .pb9
+            .into_push_pull_output_with_state(&mut gpiob.crh, PinState::Low);
+        let relay = gpiob
+            .pb8
+            .into_push_pull_output_with_state(&mut gpiob.crh, PinState::Low);
+
+        let sensor = SensorResult::Err(SensorErr::Uninitialized);
 
         (
             Shared {
@@ -146,6 +156,7 @@ mod app {
                 data,
                 aht20rtic,
                 relay,
+                sensor,
             },
             Local {
                 led,
@@ -192,10 +203,13 @@ mod app {
                         //rprintln!("decode {} / {}: {:?}", size, count, cmd);
                         rprintln!("received {:?}", cmd);
                         match cmd {
-                            Cmd::Get => start_read::spawn().unwrap(),
+                            Cmd::Get => send_status::spawn().unwrap(),
                             Cmd::Ping => send::spawn(Cmd::Pong).unwrap(),
                             Cmd::Set(r) => set_relay::spawn(r).unwrap(),
-                            _ => {} // TODO
+                            Cmd::Sensor(_) | Cmd::Status(_, _) => {
+                                rprintln!("wrong cmd received: {:?}", cmd)
+                            }
+                            Cmd::Pong => rprintln!("pong"),
                         }
                     } else {
                         rprintln!("Couldn't decode {:?}", &buffer[..*buffer_size]);
@@ -270,16 +284,15 @@ mod app {
             }
         });
         blink::spawn_after(Duration::<u64, 1, 1000>::from_ticks(1000)).unwrap();
+        start_read::spawn().unwrap();
     }
 
     #[task(shared = [relay])]
     fn set_relay(cx: set_relay::Context, state: Relay) {
         let mut relay = cx.shared.relay;
-        relay.lock(|relay| {
-            *relay = match state {
-                Relay::Open => false,
-                Relay::Close => true,
-            }
+        relay.lock(|relay| match state {
+            Relay::Open => relay.set_low(),
+            Relay::Close => relay.set_high(),
         });
     }
 
@@ -290,6 +303,7 @@ mod app {
             Ok(_) => rprintln!("calibrated"),
             Err(e) => rprintln!("NOT CALIBRATED: {:?}", e),
         });
+        start_read::spawn_after(Duration::<u64, 1, 1000>::from_ticks(10)).unwrap();
     }
 
     #[task(shared = [aht20rtic])]
@@ -323,10 +337,11 @@ mod app {
         });
     }
 
-    #[task(shared = [aht20rtic])]
+    #[task(shared = [aht20rtic, sensor])]
     fn end_read(cx: end_read::Context) {
-        let mut aht20rtic = cx.shared.aht20rtic;
-        aht20rtic.lock(|aht20rtic| {
+        let sensor = cx.shared.sensor;
+        let aht20rtic = cx.shared.aht20rtic;
+        (sensor, aht20rtic).lock(|sensor, aht20rtic| {
             let msg = match aht20rtic.end_read() {
                 Ok((h, t)) => SensorResult::Ok(SensorOk {
                     h: h.raw(),
@@ -336,7 +351,25 @@ mod app {
                 Err(Error::Checksum) => SensorResult::Err(SensorErr::CheckSum),
                 Err(Error::Bus(_)) => SensorResult::Err(SensorErr::Bus),
             };
-            send::spawn(Cmd::Sensor(msg)).unwrap();
+            *sensor = msg;
+        });
+        start_read::spawn_after(Duration::<u64, 1, 1000>::from_ticks(5000)).unwrap();
+    }
+
+    #[task(shared = [relay, sensor])]
+    fn send_status(cx: send_status::Context) {
+        let sensor = cx.shared.sensor;
+        let relay = cx.shared.relay;
+        (sensor, relay).lock(|sensor, relay| {
+            let cmd = Cmd::Status(
+                if relay.is_set_high() {
+                    Relay::Open
+                } else {
+                    Relay::Close
+                },
+                *sensor,
+            );
+            send::spawn(cmd).unwrap()
         });
     }
 
