@@ -204,9 +204,9 @@ mod app {
                         rprintln!("received {:?}", cmd);
                         match cmd {
                             Cmd::Get => send_status::spawn().unwrap(),
-                            Cmd::Ping => send::spawn(Cmd::Pong).unwrap(),
                             Cmd::Set(r) => set_relay::spawn(r).unwrap(),
-                            Cmd::Sensor(_) | Cmd::Status(_, _) => {
+                            Cmd::Ping => send::spawn(Cmd::Pong).unwrap(),
+                            Cmd::Status(_, _) => {
                                 rprintln!("wrong cmd received: {:?}", cmd)
                             }
                             Cmd::Pong => rprintln!("pong"),
@@ -284,7 +284,7 @@ mod app {
             }
         });
         blink::spawn_after(Duration::<u64, 1, 1000>::from_ticks(1000)).unwrap();
-        start_read::spawn().unwrap();
+        //start_read::spawn().unwrap();
     }
 
     #[task(shared = [relay])]

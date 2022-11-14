@@ -33,19 +33,19 @@ pub enum SensorResult {
     Ok(SensorOk),
 }
 
-#[derive(Encode, Decode, Debug, Eq, PartialEq)]
+#[derive(Encode, Decode, Debug, Eq, PartialEq, Copy, Clone)]
 pub enum Relay {
     Open,
     Close,
 }
 
-#[derive(Encode, Decode, Debug, Eq, PartialEq)]
+#[derive(Encode, Decode, Debug, Eq, PartialEq, Copy, Clone)]
 pub enum Cmd {
     Get,
     Ping,
     Pong,
     Set(Relay),
-    Sensor(SensorResult),
+    //Sensor(SensorResult),
     Status(Relay, SensorResult),
     //Syn(Handshake),
 }
