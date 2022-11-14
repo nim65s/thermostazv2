@@ -3,6 +3,7 @@ use chrono::{Local, Timelike};
 use crossbeam_channel::unbounded;
 use paho_mqtt as mqtt;
 use serde_json::Value;
+use std::env;
 use std::io::Write;
 use std::process;
 use std::sync::{Arc, Mutex};
@@ -127,6 +128,11 @@ impl Thermostazv {
 }
 
 fn main() {
+    let ser_port = env::var("SER_PORT").unwrap_or("/dev/thermostazv2".to_string());
+    let mqtt_host = env::var("MQTT_HOST").unwrap_or("mqtt://totoro:1883".to_string());
+    let mqtt_user = env::var("MQTT_USER").unwrap_or("nim".to_string());
+    let mqtt_pass = env::var("MQTT_PASS").unwrap_or("".to_string());
+
     let thermostazv = Arc::new(Mutex::new(Thermostazv::new()));
     let thermostazv_clone = Arc::clone(&thermostazv);
     let status = Arc::new(Mutex::new(Cmd::Status(
@@ -134,7 +140,7 @@ fn main() {
         SensorResult::Err(SensorErr::Uninitialized),
     )));
     let status_clone = Arc::clone(&status);
-    let mut serial_port = serialport::new("/dev/thermostazv2", 2_000_000)
+    let mut serial_port = serialport::new(ser_port, 2_000_000)
         .open()
         .expect("Failed to open serial port");
 
@@ -148,12 +154,11 @@ fn main() {
     let to_serial_send_clone = to_serial_send.clone();
     let (to_mqtt_send, to_mqtt_receive) = unbounded();
     let to_mqtt_send_clone = to_mqtt_send.clone();
-    //let (from_mqtt_send, from_mqtt_receive) = unbounded();
 
     // Create the client. Use an ID for a persistent session.
     // A real system should try harder to use a unique ID.
     let create_opts = mqtt::CreateOptionsBuilder::new()
-        .server_uri("mqtt://totoro:1883")
+        .server_uri(mqtt_host)
         .client_id("thermostazv2")
         .finalize();
 
@@ -175,6 +180,8 @@ fn main() {
         .keep_alive_interval(Duration::from_secs(20))
         .clean_session(false)
         .will_message(lwt)
+        .user_name(mqtt_user)
+        .password(mqtt_pass)
         .finalize();
 
     let subscriptions = [
