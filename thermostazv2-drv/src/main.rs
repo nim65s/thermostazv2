@@ -1,131 +1,17 @@
-use bincode::{decode_from_slice, encode_into_slice};
-use chrono::{Local, Timelike};
 use crossbeam_channel::unbounded;
 use paho_mqtt as mqtt;
 use serde_json::Value;
 use std::env;
-use std::io::Write;
 use std::process;
 use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::Duration;
+use thermostazv2_lib::{Cmd, Relay, SensorErr, SensorResult};
 
-use thermostazv2_lib::{Cmd, Relay, SensorErr, SensorResult, HEADER};
-
-struct SerialConnection {
-    serial: Box<dyn serialport::SerialPort>,
-    header_index: usize,
-    buffer: [u8; 32],
-    buffer_index: usize,
-    buffer_size: usize,
-}
-
-impl SerialConnection {
-    pub fn new(serial: Box<dyn serialport::SerialPort>) -> SerialConnection {
-        SerialConnection {
-            serial,
-            header_index: 0,
-            buffer: [0; 32],
-            buffer_index: 0,
-            buffer_size: 0,
-        }
-    }
-
-    fn read(&mut self) -> Option<Cmd> {
-        let mut ret = None;
-        let mut dst = [0];
-        let _ = self.serial.read(&mut dst).unwrap();
-        let byte = dst[0];
-        if self.header_index < HEADER.len() {
-            if byte == HEADER[self.header_index] {
-                self.header_index += 1;
-            } else {
-                eprintln!("wrong header {}: {}", self.header_index, byte);
-                self.header_index = 0;
-                self.buffer_index = 0;
-                self.buffer_size = 0;
-            }
-        } else if self.header_index == HEADER.len() {
-            self.buffer_index = 0;
-            self.header_index += 1;
-            self.buffer_size = byte.into();
-        } else {
-            self.buffer[self.buffer_index] = byte;
-            self.buffer_index += 1;
-            if self.buffer_index == self.buffer_size {
-                let config = bincode::config::standard();
-                if let Ok((cmd, _)) = decode_from_slice(&self.buffer[..self.buffer_size], config) {
-                    ret = Some(cmd);
-                } else {
-                    eprintln!("couldn't decode {:?}", &self.buffer[..self.buffer_size]);
-                }
-                self.header_index = 0;
-                self.buffer_index = 0;
-                self.buffer_size = 0;
-            }
-        }
-        ret
-    }
-
-    fn write(&mut self, cmd: &Cmd) {
-        if self.serial.write(&HEADER).unwrap() != HEADER.len() {
-            eprintln!("couldn't write full header");
-        }
-        let mut dst = [0; 32];
-        let config = bincode::config::standard();
-        let size = encode_into_slice(cmd, &mut dst, config).unwrap();
-        if self.serial.write(&[size.try_into().unwrap()]).unwrap() != 1 {
-            eprintln!("couldn't write packet length");
-        }
-        if self.serial.write(&dst[..size]).unwrap() != size {
-            eprintln!("couldn't write full cmd");
-        }
-    }
-}
-
-struct Thermostazv {
-    present: bool,
-    state: bool,
-}
-
-impl Thermostazv {
-    pub fn new() -> Thermostazv {
-        Thermostazv {
-            present: true,
-            state: false,
-        }
-    }
-
-    fn target(&self) -> f64 {
-        if self.present {
-            let now = Local::now();
-            if 6 <= now.hour() && now.hour() < 23 {
-                17.5
-            } else {
-                17.0
-            }
-        } else {
-            10.0
-        }
-    }
-
-    fn hysteresis(&self) -> f64 {
-        self.target() + if self.state { 0.5 } else { -0.5 }
-    }
-
-    pub fn update(&mut self, current_temp: f64) -> bool {
-        self.state = current_temp <= self.hysteresis();
-        self.state
-    }
-
-    pub fn set_present(&mut self, present: bool) {
-        self.present = present;
-    }
-
-    pub fn is_present(&self) -> bool {
-        self.present
-    }
-}
+mod sercon;
+mod thermostazv;
+use crate::sercon::SerialConnection;
+use crate::thermostazv::Thermostazv;
 
 fn main() {
     let ser_port = env::var("SER_PORT").unwrap_or("/dev/thermostazv2".to_string());
