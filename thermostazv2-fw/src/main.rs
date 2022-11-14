@@ -340,6 +340,7 @@ mod app {
             };
             *sensor = msg;
         });
+        send_status::spawn().unwrap();
         start_read::spawn_after(Duration::<u64, 1, 1000>::from_ticks(5000)).unwrap();
     }
 
