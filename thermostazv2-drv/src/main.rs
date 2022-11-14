@@ -14,10 +14,10 @@ use crate::sercon::SerialConnection;
 use crate::thermostazv::Thermostazv;
 
 fn main() {
-    let ser_port = env::var("SER_PORT").unwrap_or("/dev/thermostazv2".to_string());
-    let mqtt_host = env::var("MQTT_HOST").unwrap_or("totoro".to_string());
-    let mqtt_user = env::var("MQTT_USER").unwrap_or("nim".to_string());
-    let mqtt_pass = env::var("MQTT_PASS").unwrap_or("".to_string());
+    let uart_port = env::var("UART_PORT").unwrap_or_else(|_| "/dev/thermostazv2".into());
+    let mqtt_host = env::var("MQTT_HOST").unwrap_or_else(|_| "totoro".into());
+    let mqtt_user = env::var("MQTT_USER").unwrap_or_else(|_| "nim".into());
+    let mqtt_pass = env::var("MQTT_PASS").unwrap_or_else(|_| "".into());
 
     let thermostazv = Arc::new(Mutex::new(Thermostazv::new()));
     let thermostazv_clone = Arc::clone(&thermostazv);
@@ -26,7 +26,7 @@ fn main() {
         SensorResult::Err(SensorErr::Uninitialized),
     )));
     let status_clone = Arc::clone(&status);
-    let mut serial_port = serialport::new(ser_port, 2_000_000)
+    let mut serial_port = serialport::new(uart_port, 2_000_000)
         .open()
         .expect("Failed to open serial port");
 
@@ -37,9 +37,9 @@ fn main() {
     let serial_clone = serial_port.try_clone().expect("Failed to clone");
 
     let (to_serial_send, to_serial_receive) = unbounded();
-    let to_serial_send_clone = to_serial_send.clone();
     let (to_mqtt_send, to_mqtt_receive) = unbounded();
     let (from_mqtt_send, from_mqtt_receive) = unbounded();
+    let to_serial_send_clone = to_serial_send.clone();
     let to_mqtt_send_clone = to_mqtt_send.clone();
 
     let lwt = LastWill::new("/azv/thermostazv2/lwt", "Offline", QoS::AtLeastOnce, false);
@@ -60,17 +60,6 @@ fn main() {
     client
         .subscribe("tele/tasmota_43D8FD/SENSOR", QoS::AtMostOnce)
         .unwrap();
-
-    /*
-    thread::spawn(move || {
-        for i in 0..10 {
-            client
-                .publish("hello/rumqtt", QoS::AtLeastOnce, false, vec![i; i as usize])
-                .unwrap();
-            thread::sleep(Duration::from_millis(100));
-        }
-    });
-    */
 
     // serial writer thread
     thread::spawn(move || {
