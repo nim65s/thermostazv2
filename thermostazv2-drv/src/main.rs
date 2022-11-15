@@ -3,7 +3,7 @@ use rumqttc::mqttbytes::v4::Publish;
 use rumqttc::{Client, Event, LastWill, MqttOptions, Packet, QoS};
 use serde_json::Value;
 use std::env;
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, RwLock};
 use std::thread;
 use std::time::Duration;
 use thermostazv2_lib::{Cmd, Relay, SensorErr, SensorResult};
@@ -19,9 +19,9 @@ fn main() {
     let mqtt_user = env::var("MQTT_USER").unwrap_or_else(|_| "nim".into());
     let mqtt_pass = env::var("MQTT_PASS").unwrap_or_else(|_| "".into());
 
-    let thermostazv = Arc::new(Mutex::new(Thermostazv::new()));
+    let thermostazv = Arc::new(RwLock::new(Thermostazv::new()));
     let thermostazv_clone = Arc::clone(&thermostazv);
-    let status = Arc::new(Mutex::new(Cmd::Status(
+    let status = Arc::new(RwLock::new(Cmd::Status(
         Relay::Cold,
         SensorResult::Err(SensorErr::Uninitialized),
     )));
@@ -42,7 +42,7 @@ fn main() {
     let to_serial_send_clone = to_serial_send.clone();
     let to_mqtt_send_clone = to_mqtt_send.clone();
 
-    let lwt = LastWill::new("/azv/thermostazv2/lwt", "Offline", QoS::AtLeastOnce, false);
+    let lwt = LastWill::new("/azv/thermostazv/lwt", "Offline", QoS::AtLeastOnce, false);
 
     let mut mqttoptions = MqttOptions::new("thermostazv2", mqtt_host, 1883);
     mqttoptions.set_keep_alive(Duration::from_secs(5));
@@ -75,12 +75,12 @@ fn main() {
         let mut serial_connection = SerialConnection::new(serial_port);
         loop {
             if let Some(cmd) = serial_connection.read() {
-                println!("serial received {:?}", cmd);
+                //println!("serial received {:?}", cmd);
                 match cmd {
                     Cmd::Ping => to_serial_send.send(Cmd::Pong).unwrap(),
-                    Cmd::Status(_, _) => {
-                        let mut st = status.lock().unwrap();
-                        *st = cmd;
+                    Cmd::Status(r, s) => {
+                        let mut st = status.write().unwrap();
+                        *st = Cmd::Status(r, s);
                     }
                     Cmd::Get | Cmd::Set(_) => {
                         eprintln!("wrong cmd received: {:?}", cmd)
@@ -94,7 +94,7 @@ fn main() {
     // mqtt receiver thread
     thread::spawn(move || loop {
         let msg: Publish = from_mqtt_receive.recv().unwrap();
-        println!("mqtt received {:?}", msg);
+        //println!("mqtt received {:?}", msg);
         let topic = msg.topic;
         let cmd = msg.payload;
         if topic == "/azv/thermostazv/cmd" {
@@ -103,48 +103,56 @@ fn main() {
             } else if cmd == "f" {
                 to_serial_send_clone.send(Cmd::Set(Relay::Cold)).unwrap();
             } else if cmd == "s" {
-                let st = status_clone.lock().unwrap();
+                let st = status_clone.read().unwrap();
                 to_mqtt_send_clone.send(*st).unwrap();
             } else if cmd == "p" {
                 to_serial_send_clone.send(Cmd::Ping).unwrap();
             }
         } else if topic == "/azv/thermostazv/presence" {
             if cmd == "présent" {
-                let mut thermostazv = thermostazv.lock().unwrap();
+                let mut thermostazv = thermostazv.write().unwrap();
                 thermostazv.set_present(true);
             } else if cmd == "absent" {
-                let mut thermostazv = thermostazv.lock().unwrap();
+                let mut thermostazv = thermostazv.write().unwrap();
                 thermostazv.set_present(false);
             }
         } else if topic == "tele/tasmota_43D8FD/SENSOR" {
-            let v: Value = serde_json::from_str(&cmd.escape_ascii().to_string()).unwrap();
-            if let Value::Number(temperature) = &v["SI7021"]["Temperature"] {
-                let mut thermostazv = thermostazv.lock().unwrap();
-                to_serial_send_clone
-                    .send(Cmd::Set(
-                        if thermostazv.update(temperature.as_f64().unwrap()) {
-                            Relay::Hot
-                        } else {
-                            Relay::Cold
-                        },
-                    ))
-                    .unwrap();
+            let decoded: Result<Value, _> = serde_json::from_slice(&cmd);
+            match decoded {
+                Ok(v) => {
+                    if let Value::Number(temperature) = &v["SI7021"]["Temperature"] {
+                        let mut thermostazv = thermostazv.write().unwrap();
+                        let temp = temperature.as_f64().unwrap();
+                        let update = thermostazv.update(temp);
+                        let new_relay = if update { Relay::Hot } else { Relay::Cold };
+                        to_serial_send_clone.send(Cmd::Set(new_relay)).unwrap();
+                        println!("temperature: {} => chauffe: {}", temp, update);
+                        if let Cmd::Status(old_relay, _) = *status_clone.read().unwrap() {
+                            if old_relay != new_relay {
+                                to_mqtt_send_clone.send(Cmd::Set(new_relay)).unwrap();
+                            }
+                        }
+                    }
+                }
+                Err(e) => eprintln!("Error {} decoding json for '{:?}'", e, &cmd),
             }
         }
     });
 
     // mqtt publisher thread
-    thread::spawn(move || {
+    thread::spawn(move || loop {
         let cmd = to_mqtt_receive.recv().unwrap();
         let msg = match cmd {
-            Cmd::Get | Cmd::Ping | Cmd::Set(_) => {
+            Cmd::Get | Cmd::Ping => {
                 eprintln!("wrong command to publish to MQTT");
                 None
             }
+            Cmd::Set(Relay::Hot) => Some("allumage du chauffe-eau".to_string()),
+            Cmd::Set(Relay::Cold) => Some("extinction du chauffe-eau".to_string()),
             Cmd::Pong => Some("pong".to_string()),
             Cmd::Status(relay, sensor) => Some(format!(
                 "présent: {}, relay: {:?}, garage: {}",
-                thermostazv_clone.lock().unwrap().is_present(),
+                thermostazv_clone.read().unwrap().is_present(),
                 relay,
                 match sensor {
                     SensorResult::Ok(s) => format!("{}°C, {}%", s.celsius(), s.rh()),
@@ -168,5 +176,5 @@ fn main() {
             Ok(_) => {}
         }
     }
-    println!("no more notifications.");
+    eprintln!("no more notifications.");
 }

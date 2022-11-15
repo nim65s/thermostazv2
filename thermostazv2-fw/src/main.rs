@@ -21,6 +21,7 @@ mod app {
     use stm32f1xx_hal::pac::I2C1;
     use stm32f1xx_hal::prelude::*;
     use stm32f1xx_hal::usb::{Peripheral, UsbBus, UsbBusType};
+    use stm32f1xx_hal::watchdog::IndependentWatchdog;
     use systick_monotonic::{fugit::Duration, Systick};
     use thermostazv2_lib::*;
     use usb_device::prelude::*;
@@ -44,6 +45,7 @@ mod app {
         buffer: [u8; 32],
         buffer_index: usize,
         buffer_size: usize,
+        iwdg: IndependentWatchdog,
     }
 
     #[monotonic(binds = SysTick, default = true)]
@@ -134,8 +136,8 @@ mod app {
         let led = gpioc
             .pc13
             .into_push_pull_output_with_state(&mut gpioc.crh, PinState::Low);
-        blink::spawn_after(Duration::<u64, 1, 1000>::from_ticks(1000)).unwrap();
-        wait_calibrate::spawn_after(Duration::<u64, 1, 1000>::from_ticks(20)).unwrap();
+        blink::spawn_after(Duration::<u64, 1, 1000>::secs(1)).unwrap();
+        wait_calibrate::spawn_after(Duration::<u64, 1, 1000>::millis(20)).unwrap();
         rprintln!("init end");
 
         gpiob
@@ -146,6 +148,9 @@ mod app {
             .into_push_pull_output_with_state(&mut gpiob.crh, PinState::Low);
 
         let sensor = SensorResult::Err(SensorErr::Uninitialized);
+
+        let mut iwdg = IndependentWatchdog::new(cx.device.IWDG);
+        iwdg.start(Duration::<u32, 1, 1000>::secs(3));
 
         (
             Shared {
@@ -162,6 +167,7 @@ mod app {
                 buffer: [0; 32],
                 buffer_index: 0,
                 buffer_size: 0,
+                iwdg,
             },
             init::Monotonics(mono),
         )
@@ -260,8 +266,9 @@ mod app {
         });
     }
 
-    #[task(local = [led, state])]
+    #[task(local = [led, state, iwdg])]
     fn blink(cx: blink::Context) {
+        cx.local.iwdg.feed();
         if *cx.local.state {
             cx.local.led.set_high();
             *cx.local.state = false;
@@ -270,7 +277,7 @@ mod app {
             *cx.local.state = true;
         }
 
-        blink::spawn_after(Duration::<u64, 1, 1000>::from_ticks(1000)).unwrap();
+        blink::spawn_after(Duration::<u64, 1, 1000>::secs(1)).unwrap();
         //start_read::spawn().unwrap();
     }
 
@@ -290,7 +297,7 @@ mod app {
             Ok(_) => rprintln!("calibrated"),
             Err(e) => rprintln!("NOT CALIBRATED: {:?}", e),
         });
-        start_read::spawn_after(Duration::<u64, 1, 1000>::from_ticks(10)).unwrap();
+        start_read::spawn_after(Duration::<u64, 1, 1000>::millis(10)).unwrap();
     }
 
     #[task(shared = [aht20rtic])]
@@ -298,7 +305,7 @@ mod app {
         let mut aht20rtic = cx.shared.aht20rtic;
         aht20rtic.lock(|aht20rtic| {
             if aht20rtic.busy().unwrap() {
-                wait_calibrate::spawn_after(Duration::<u64, 1, 1000>::from_ticks(10)).unwrap();
+                wait_calibrate::spawn_after(Duration::<u64, 1, 1000>::millis(10)).unwrap();
             } else {
                 calibrate::spawn().unwrap();
             }
@@ -309,7 +316,7 @@ mod app {
     fn start_read(cx: start_read::Context) {
         let mut aht20rtic = cx.shared.aht20rtic;
         aht20rtic.lock(|aht20rtic| aht20rtic.start_read().unwrap());
-        wait_read::spawn_after(Duration::<u64, 1, 1000>::from_ticks(80)).unwrap();
+        wait_read::spawn_after(Duration::<u64, 1, 1000>::millis(80)).unwrap();
     }
 
     #[task(shared = [aht20rtic])]
@@ -317,7 +324,7 @@ mod app {
         let mut aht20rtic = cx.shared.aht20rtic;
         aht20rtic.lock(|aht20rtic| {
             if aht20rtic.busy().unwrap() {
-                wait_read::spawn_after(Duration::<u64, 1, 1000>::from_ticks(10)).unwrap();
+                wait_read::spawn_after(Duration::<u64, 1, 1000>::millis(10)).unwrap();
             } else {
                 end_read::spawn().unwrap();
             }
@@ -341,7 +348,7 @@ mod app {
             *sensor = msg;
         });
         send_status::spawn().unwrap();
-        start_read::spawn_after(Duration::<u64, 1, 1000>::from_ticks(5000)).unwrap();
+        start_read::spawn_after(Duration::<u64, 1, 1000>::secs(5)).unwrap();
     }
 
     #[task(shared = [relay, sensor])]
