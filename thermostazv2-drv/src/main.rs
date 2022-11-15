@@ -31,18 +31,17 @@ async fn main() {
     )));
     let status_clone = Arc::clone(&status);
 
-    let mut serial_port = tokio_serial::new(uart_port, 2_000_000)
+    let mut uart_port = tokio_serial::new(uart_port, 2_000_000)
         .open_native_async()
         .expect("Failed to open serial port");
-    serial_port.set_exclusive(false).unwrap();
+    uart_port.set_exclusive(false).unwrap();
 
-    let (mut serial_writer, mut serial_reader) =
-        SerialConnection::new().framed(serial_port).split();
+    let (mut uart_writer, mut uart_reader) = SerialConnection::new().framed(uart_port).split();
 
-    let (to_serial_send, to_serial_receive) = unbounded();
+    let (to_uart_send, to_uart_receive) = unbounded();
     let (to_mqtt_send, to_mqtt_receive) = unbounded();
     let (from_mqtt_send, from_mqtt_receive) = unbounded();
-    let to_serial_send_clone = to_serial_send.clone();
+    let to_uart_send_clone = to_uart_send.clone();
     let to_mqtt_send_clone = to_mqtt_send.clone();
 
     let lwt = LastWill::new("/azv/thermostazv/lwt", "Offline", QoS::AtLeastOnce, false);
@@ -57,18 +56,18 @@ async fn main() {
     // serial writer task
     task::spawn(async move {
         loop {
-            let cmd = to_serial_receive.recv().await.unwrap();
-            serial_writer.send(cmd).await.unwrap();
+            let cmd = to_uart_receive.recv().await.unwrap();
+            uart_writer.send(cmd).await.unwrap();
         }
     });
 
     // serial reader task
     task::spawn(async move {
         loop {
-            if let Some(Ok(cmd)) = serial_reader.next().await {
+            if let Some(Ok(cmd)) = uart_reader.next().await {
                 //println!("serial received {:?}", cmd);
                 match cmd {
-                    Cmd::Ping => to_serial_send.send(Cmd::Pong).await.unwrap(),
+                    Cmd::Ping => to_uart_send.send(Cmd::Pong).await.unwrap(),
                     Cmd::Status(r, s) => {
                         let mut st = status.write().unwrap();
                         *st = Cmd::Status(r, s);
@@ -91,12 +90,9 @@ async fn main() {
             let cmd = msg.payload;
             if topic == "/azv/thermostazv/cmd" {
                 if cmd == "c" {
-                    to_serial_send_clone
-                        .send(Cmd::Set(Relay::Hot))
-                        .await
-                        .unwrap();
+                    to_uart_send_clone.send(Cmd::Set(Relay::Hot)).await.unwrap();
                 } else if cmd == "f" {
-                    to_serial_send_clone
+                    to_uart_send_clone
                         .send(Cmd::Set(Relay::Cold))
                         .await
                         .unwrap();
@@ -107,7 +103,7 @@ async fn main() {
                     }
                     to_mqtt_send_clone.send(st_clone).await.unwrap();
                 } else if cmd == "p" {
-                    to_serial_send_clone.send(Cmd::Ping).await.unwrap();
+                    to_uart_send_clone.send(Cmd::Ping).await.unwrap();
                 }
             } else if topic == "/azv/thermostazv/presence" {
                 if cmd == "présent" {
@@ -129,10 +125,7 @@ async fn main() {
                                 update = thermostazv.update(temp);
                             }
                             let new_relay = if update { Relay::Hot } else { Relay::Cold };
-                            to_serial_send_clone
-                                .send(Cmd::Set(new_relay))
-                                .await
-                                .unwrap();
+                            to_uart_send_clone.send(Cmd::Set(new_relay)).await.unwrap();
                             println!("temperature: {} => chauffe: {}", temp, update);
                             let st;
                             {
