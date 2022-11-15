@@ -1,4 +1,5 @@
 use async_channel::unbounded;
+use futures::{stream::StreamExt, SinkExt};
 use rumqttc::mqttbytes::v4::Publish;
 use rumqttc::{AsyncClient, Event, LastWill, MqttOptions, Packet, QoS};
 use serde_json::Value;
@@ -7,6 +8,8 @@ use std::sync::{Arc, RwLock};
 use std::time::Duration;
 use thermostazv2_lib::{Cmd, Relay, SensorErr, SensorResult};
 use tokio::task;
+use tokio_serial::SerialPortBuilderExt;
+use tokio_util::codec::Decoder;
 
 mod sercon;
 mod thermostazv;
@@ -27,15 +30,14 @@ async fn main() {
         SensorResult::Err(SensorErr::Uninitialized),
     )));
     let status_clone = Arc::clone(&status);
-    let mut serial_port = serialport::new(uart_port, 2_000_000)
-        .open()
+
+    let mut serial_port = tokio_serial::new(uart_port, 2_000_000)
+        .open_native_async()
         .expect("Failed to open serial port");
+    serial_port.set_exclusive(false).unwrap();
 
-    serial_port
-        .set_timeout(Duration::from_millis(60_000))
-        .unwrap();
-
-    let serial_clone = serial_port.try_clone().expect("Failed to clone");
+    let (mut serial_writer, mut serial_reader) =
+        SerialConnection::new().framed(serial_port).split();
 
     let (to_serial_send, to_serial_receive) = unbounded();
     let (to_mqtt_send, to_mqtt_receive) = unbounded();
@@ -54,18 +56,16 @@ async fn main() {
 
     // serial writer task
     task::spawn(async move {
-        let mut serial_connection = SerialConnection::new(serial_clone);
         loop {
             let cmd = to_serial_receive.recv().await.unwrap();
-            serial_connection.write(&cmd);
+            serial_writer.send(cmd).await.unwrap();
         }
     });
 
     // serial reader task
     task::spawn(async move {
-        let mut serial_connection = SerialConnection::new(serial_port);
         loop {
-            if let Some(cmd) = serial_connection.read() {
+            if let Some(Ok(cmd)) = serial_reader.next().await {
                 //println!("serial received {:?}", cmd);
                 match cmd {
                     Cmd::Ping => to_serial_send.send(Cmd::Pong).await.unwrap(),

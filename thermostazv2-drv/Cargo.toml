@@ -8,11 +8,16 @@ edition = "2021"
 [dependencies]
 async-channel = "1.7.1"
 bincode = { version = "2.0.0-rc", default-features = false, features = ["derive"] }
+bytes = "1.2.1"
 chrono = "0.4.23"
 crossbeam-channel = { version = "0.5.6", features = ["crossbeam-utils"] }
 crossbeam-utils = "0.8.12"
+futures = "0.3.25"
+futures-util = "0.3.25"
 rumqttc = "0.17.0"
 serde_json = "1.0.87"
 serialport = "4.2.0"
 thermostazv2-lib = { path = "../thermostazv2-lib" }
 tokio = { version = "1.21.2", features = ["full"] }
+tokio-serial = { version = "5.4.4", features = ["tokio-util"] }
+tokio-util = { version = "0.7.4", features = ["full"] }
