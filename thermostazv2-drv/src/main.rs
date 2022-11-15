@@ -1,19 +1,20 @@
-use crossbeam_channel::unbounded;
+use async_channel::unbounded;
 use rumqttc::mqttbytes::v4::Publish;
-use rumqttc::{Client, Event, LastWill, MqttOptions, Packet, QoS};
+use rumqttc::{AsyncClient, Event, LastWill, MqttOptions, Packet, QoS};
 use serde_json::Value;
 use std::env;
 use std::sync::{Arc, RwLock};
-use std::thread;
 use std::time::Duration;
 use thermostazv2_lib::{Cmd, Relay, SensorErr, SensorResult};
+use tokio::task;
 
 mod sercon;
 mod thermostazv;
 use crate::sercon::SerialConnection;
 use crate::thermostazv::Thermostazv;
 
-fn main() {
+#[tokio::main]
+async fn main() {
     let uart_port = env::var("UART_PORT").unwrap_or_else(|_| "/dev/thermostazv2".into());
     let mqtt_host = env::var("MQTT_HOST").unwrap_or_else(|_| "totoro".into());
     let mqtt_user = env::var("MQTT_USER").unwrap_or_else(|_| "nim".into());
@@ -49,35 +50,25 @@ fn main() {
     mqttoptions.set_last_will(lwt);
     mqttoptions.set_credentials(mqtt_user, mqtt_pass);
 
-    let (mut client, mut connection) = Client::new(mqttoptions, 10);
+    let (client, mut connection) = AsyncClient::new(mqttoptions, 10);
 
-    client
-        .subscribe("/azv/thermostazv/cmd", QoS::AtMostOnce)
-        .unwrap();
-    client
-        .subscribe("/azv/thermostazv/presence", QoS::AtMostOnce)
-        .unwrap();
-    client
-        .subscribe("tele/tasmota_43D8FD/SENSOR", QoS::AtMostOnce)
-        .unwrap();
-
-    // serial writer thread
-    thread::spawn(move || {
+    // serial writer task
+    task::spawn(async move {
         let mut serial_connection = SerialConnection::new(serial_clone);
         loop {
-            let cmd = to_serial_receive.recv().unwrap();
+            let cmd = to_serial_receive.recv().await.unwrap();
             serial_connection.write(&cmd);
         }
     });
 
-    // serial reader thread
-    thread::spawn(move || {
+    // serial reader task
+    task::spawn(async move {
         let mut serial_connection = SerialConnection::new(serial_port);
         loop {
             if let Some(cmd) = serial_connection.read() {
                 //println!("serial received {:?}", cmd);
                 match cmd {
-                    Cmd::Ping => to_serial_send.send(Cmd::Pong).unwrap(),
+                    Cmd::Ping => to_serial_send.send(Cmd::Pong).await.unwrap(),
                     Cmd::Status(r, s) => {
                         let mut st = status.write().unwrap();
                         *st = Cmd::Status(r, s);
@@ -85,96 +76,133 @@ fn main() {
                     Cmd::Get | Cmd::Set(_) => {
                         eprintln!("wrong cmd received: {:?}", cmd)
                     }
-                    Cmd::Pong => to_mqtt_send.send(cmd).unwrap(),
+                    Cmd::Pong => to_mqtt_send.send(cmd).await.unwrap(),
                 }
             }
         }
     });
 
-    // mqtt receiver thread
-    thread::spawn(move || loop {
-        let msg: Publish = from_mqtt_receive.recv().unwrap();
-        //println!("mqtt received {:?}", msg);
-        let topic = msg.topic;
-        let cmd = msg.payload;
-        if topic == "/azv/thermostazv/cmd" {
-            if cmd == "c" {
-                to_serial_send_clone.send(Cmd::Set(Relay::Hot)).unwrap();
-            } else if cmd == "f" {
-                to_serial_send_clone.send(Cmd::Set(Relay::Cold)).unwrap();
-            } else if cmd == "s" {
-                let st = status_clone.read().unwrap();
-                to_mqtt_send_clone.send(*st).unwrap();
-            } else if cmd == "p" {
-                to_serial_send_clone.send(Cmd::Ping).unwrap();
-            }
-        } else if topic == "/azv/thermostazv/presence" {
-            if cmd == "présent" {
-                let mut thermostazv = thermostazv.write().unwrap();
-                thermostazv.set_present(true);
-            } else if cmd == "absent" {
-                let mut thermostazv = thermostazv.write().unwrap();
-                thermostazv.set_present(false);
-            }
-        } else if topic == "tele/tasmota_43D8FD/SENSOR" {
-            let decoded: Result<Value, _> = serde_json::from_slice(&cmd);
-            match decoded {
-                Ok(v) => {
-                    if let Value::Number(temperature) = &v["SI7021"]["Temperature"] {
-                        let mut thermostazv = thermostazv.write().unwrap();
-                        let temp = temperature.as_f64().unwrap();
-                        let update = thermostazv.update(temp);
-                        let new_relay = if update { Relay::Hot } else { Relay::Cold };
-                        to_serial_send_clone.send(Cmd::Set(new_relay)).unwrap();
-                        println!("temperature: {} => chauffe: {}", temp, update);
-                        if let Cmd::Status(old_relay, _) = *status_clone.read().unwrap() {
-                            if old_relay != new_relay {
-                                to_mqtt_send_clone.send(Cmd::Set(new_relay)).unwrap();
+    // mqtt receiver task
+    task::spawn(async move {
+        loop {
+            let msg: Publish = from_mqtt_receive.recv().await.unwrap();
+            //println!("mqtt received {:?}", msg);
+            let topic = msg.topic;
+            let cmd = msg.payload;
+            if topic == "/azv/thermostazv/cmd" {
+                if cmd == "c" {
+                    to_serial_send_clone
+                        .send(Cmd::Set(Relay::Hot))
+                        .await
+                        .unwrap();
+                } else if cmd == "f" {
+                    to_serial_send_clone
+                        .send(Cmd::Set(Relay::Cold))
+                        .await
+                        .unwrap();
+                } else if cmd == "s" {
+                    let st_clone;
+                    {
+                        st_clone = *status_clone.read().unwrap();
+                    }
+                    to_mqtt_send_clone.send(st_clone).await.unwrap();
+                } else if cmd == "p" {
+                    to_serial_send_clone.send(Cmd::Ping).await.unwrap();
+                }
+            } else if topic == "/azv/thermostazv/presence" {
+                if cmd == "présent" {
+                    let mut thermostazv = thermostazv.write().unwrap();
+                    thermostazv.set_present(true);
+                } else if cmd == "absent" {
+                    let mut thermostazv = thermostazv.write().unwrap();
+                    thermostazv.set_present(false);
+                }
+            } else if topic == "tele/tasmota_43D8FD/SENSOR" {
+                let decoded: Result<Value, _> = serde_json::from_slice(&cmd);
+                match decoded {
+                    Ok(v) => {
+                        if let Value::Number(temperature) = &v["SI7021"]["Temperature"] {
+                            let update;
+                            let temp = temperature.as_f64().unwrap();
+                            {
+                                let mut thermostazv = thermostazv.write().unwrap();
+                                update = thermostazv.update(temp);
+                            }
+                            let new_relay = if update { Relay::Hot } else { Relay::Cold };
+                            to_serial_send_clone
+                                .send(Cmd::Set(new_relay))
+                                .await
+                                .unwrap();
+                            println!("temperature: {} => chauffe: {}", temp, update);
+                            let st;
+                            {
+                                st = *status_clone.read().unwrap();
+                            }
+
+                            if let Cmd::Status(old_relay, _) = st {
+                                if old_relay != new_relay {
+                                    to_mqtt_send_clone.send(Cmd::Set(new_relay)).await.unwrap();
+                                }
                             }
                         }
                     }
+                    Err(e) => eprintln!("Error {} decoding json for '{:?}'", e, &cmd),
                 }
-                Err(e) => eprintln!("Error {} decoding json for '{:?}'", e, &cmd),
             }
         }
     });
 
-    // mqtt publisher thread
-    thread::spawn(move || loop {
-        let cmd = to_mqtt_receive.recv().unwrap();
-        let msg = match cmd {
-            Cmd::Get | Cmd::Ping => {
-                eprintln!("wrong command to publish to MQTT");
-                None
-            }
-            Cmd::Set(Relay::Hot) => Some("allumage du chauffe-eau".to_string()),
-            Cmd::Set(Relay::Cold) => Some("extinction du chauffe-eau".to_string()),
-            Cmd::Pong => Some("pong".to_string()),
-            Cmd::Status(relay, sensor) => Some(format!(
-                "présent: {}, relay: {:?}, garage: {}",
-                thermostazv_clone.read().unwrap().is_present(),
-                relay,
-                match sensor {
-                    SensorResult::Ok(s) => format!("{}°C, {}%", s.celsius(), s.rh()),
-                    SensorResult::Err(e) => format!("error {:?}", e),
-                }
-            )),
-        };
+    client
+        .subscribe("/azv/thermostazv/cmd", QoS::AtMostOnce)
+        .await
+        .unwrap();
+    client
+        .subscribe("/azv/thermostazv/presence", QoS::AtMostOnce)
+        .await
+        .unwrap();
+    client
+        .subscribe("tele/tasmota_43D8FD/SENSOR", QoS::AtMostOnce)
+        .await
+        .unwrap();
 
-        if let Some(msg) = msg {
-            client
-                .publish("/azv/thermostazv/log", QoS::AtLeastOnce, false, msg)
-                .unwrap();
+    // mqtt publisher task
+    task::spawn(async move {
+        loop {
+            let cmd = to_mqtt_receive.recv().await.unwrap();
+            let msg = match cmd {
+                Cmd::Get | Cmd::Ping => {
+                    eprintln!("wrong command to publish to MQTT");
+                    None
+                }
+                Cmd::Set(Relay::Hot) => Some("allumage du chauffe-eau".to_string()),
+                Cmd::Set(Relay::Cold) => Some("extinction du chauffe-eau".to_string()),
+                Cmd::Pong => Some("pong".to_string()),
+                Cmd::Status(relay, sensor) => Some(format!(
+                    "présent: {}, relay: {:?}, garage: {}",
+                    thermostazv_clone.read().unwrap().is_present(),
+                    relay,
+                    match sensor {
+                        SensorResult::Ok(s) => format!("{}°C, {}%", s.celsius(), s.rh()),
+                        SensorResult::Err(e) => format!("error {:?}", e),
+                    }
+                )),
+            };
+
+            if let Some(msg) = msg {
+                client
+                    .publish("/azv/thermostazv/log", QoS::AtLeastOnce, false, msg)
+                    .await
+                    .unwrap();
+            }
         }
     });
 
-    // mqtt publish (main) thread
-    for notification in connection.iter() {
-        match notification {
-            Ok(Event::Incoming(Packet::Publish(p))) => from_mqtt_send.send(p).unwrap(),
-            Err(n) => eprintln!("Err:  {:?}", n),
+    // mqtt publish (main) task
+    loop {
+        match connection.poll().await {
+            Ok(Event::Incoming(Packet::Publish(p))) => from_mqtt_send.send(p).await.unwrap(),
+            Err(n) => eprintln!("incoming mqtt packet Err:  {:?}", n),
             Ok(_) => {}
         }
     }
-    eprintln!("no more notifications.");
 }

@@ -6,6 +6,7 @@ edition = "2021"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
+async-channel = "1.7.1"
 bincode = { version = "2.0.0-rc", default-features = false, features = ["derive"] }
 chrono = "0.4.23"
 crossbeam-channel = { version = "0.5.6", features = ["crossbeam-utils"] }
@@ -14,3 +15,4 @@ rumqttc = "0.17.0"
 serde_json = "1.0.87"
 serialport = "4.2.0"
 thermostazv2-lib = { path = "../thermostazv2-lib" }
+tokio = { version = "1.21.2", features = ["full"] }
