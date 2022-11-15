@@ -1,5 +1,6 @@
 use async_channel::unbounded;
-use futures::{stream::StreamExt, SinkExt};
+use futures::{stream, stream::StreamExt, SinkExt};
+use influxdb2::models::DataPoint;
 use rumqttc::mqttbytes::v4::Publish;
 use rumqttc::{AsyncClient, Event, LastWill, MqttOptions, Packet, QoS};
 use serde_json::Value;
@@ -8,6 +9,7 @@ use std::sync::{Arc, RwLock};
 use std::time::Duration;
 use thermostazv2_lib::{Cmd, Relay, SensorErr, SensorResult};
 use tokio::task;
+use tokio::time::sleep;
 use tokio_serial::SerialPortBuilderExt;
 use tokio_util::codec::Decoder;
 
@@ -21,15 +23,21 @@ async fn main() {
     let uart_port = env::var("UART_PORT").unwrap_or_else(|_| "/dev/thermostazv2".into());
     let mqtt_host = env::var("MQTT_HOST").unwrap_or_else(|_| "totoro".into());
     let mqtt_user = env::var("MQTT_USER").unwrap_or_else(|_| "nim".into());
-    let mqtt_pass = env::var("MQTT_PASS").unwrap_or_else(|_| "".into());
+    let mqtt_pass = env::var("MQTT_PASS").unwrap();
+    let infl_buck = env::var("INFL_BUCK").unwrap_or_else(|_| "azviot".into());
+    let infl_org = env::var("INFL_ORG").unwrap_or_else(|_| "azviot".into());
+    let infl_url = env::var("INFL_URL").unwrap_or_else(|_| "http://localhost:8086".into());
+    let infl_token = env::var("INFL_TOKEN").unwrap();
 
     let thermostazv = Arc::new(RwLock::new(Thermostazv::new()));
-    let thermostazv_clone = Arc::clone(&thermostazv);
     let status = Arc::new(RwLock::new(Cmd::Status(
         Relay::Cold,
         SensorResult::Err(SensorErr::Uninitialized),
     )));
+    let thermostazv_clone = Arc::clone(&thermostazv);
     let status_clone = Arc::clone(&status);
+    let thermostazv_infl = Arc::clone(&thermostazv);
+    let status_infl = Arc::clone(&status);
 
     let mut uart_port = tokio_serial::new(uart_port, 2_000_000)
         .open_native_async()
@@ -187,6 +195,52 @@ async fn main() {
                     .await
                     .unwrap();
             }
+        }
+    });
+
+    task::spawn(async move {
+        let client = influxdb2::Client::new(infl_url, infl_org, infl_token);
+        loop {
+            let relay;
+            let absent;
+            let target;
+            let mut temperature = None;
+            let mut humidity = None;
+            {
+                let th = thermostazv_infl.read().unwrap();
+                absent = !th.is_present();
+                relay = th.is_hot();
+                target = th.hysteresis();
+            }
+            {
+                let st = status_infl.read().unwrap();
+                if let Cmd::Status(_, SensorResult::Ok(sensor)) = *st {
+                    temperature = Some(sensor.celsius());
+                    humidity = Some(sensor.rh());
+                }
+            }
+            let mut points = vec![DataPoint::builder("azviot")
+                .tag("device", "thermostazv")
+                .field("relay", relay)
+                .field("absent", absent)
+                .field("targetf", target)
+                .build()
+                .unwrap()];
+            if let Some(temperature) = temperature {
+                points.push(
+                    DataPoint::builder("azviot")
+                        .tag("device", "thermostazv")
+                        .field("Temperature", temperature as f64)
+                        .field("Humidity", humidity.unwrap() as f64)
+                        .build()
+                        .unwrap(),
+                );
+            }
+            client
+                .write(&infl_buck, stream::iter(points))
+                .await
+                .unwrap();
+            sleep(Duration::from_secs(300)).await;
         }
     });
 

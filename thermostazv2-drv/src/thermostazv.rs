@@ -26,7 +26,7 @@ impl Thermostazv {
         }
     }
 
-    fn hysteresis(&self) -> f64 {
+    pub fn hysteresis(&self) -> f64 {
         self.target() + if self.state { 0.5 } else { -0.5 }
     }
 
@@ -41,5 +41,9 @@ impl Thermostazv {
 
     pub fn is_present(&self) -> bool {
         self.present
+    }
+
+    pub fn is_hot(&self) -> bool {
+        self.state
     }
 }
