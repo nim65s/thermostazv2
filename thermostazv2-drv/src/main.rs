@@ -162,6 +162,10 @@ async fn main() {
         .subscribe("tele/tasmota_43D8FD/SENSOR", QoS::AtMostOnce)
         .await
         .unwrap();
+    client
+        .publish("/azv/thermostazv/log", QoS::AtLeastOnce, false, "Hi !")
+        .await
+        .unwrap();
 
     // mqtt publisher task
     task::spawn(async move {
