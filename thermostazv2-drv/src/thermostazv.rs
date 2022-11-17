@@ -2,14 +2,14 @@ use chrono::{Local, Timelike};
 
 pub struct Thermostazv {
     present: bool,
-    state: bool,
+    hot: bool,
 }
 
 impl Thermostazv {
     pub fn new() -> Thermostazv {
         Thermostazv {
             present: true,
-            state: false,
+            hot: false,
         }
     }
 
@@ -27,12 +27,12 @@ impl Thermostazv {
     }
 
     pub fn hysteresis(&self) -> f64 {
-        self.target() + if self.state { 0.5 } else { -0.5 }
+        self.target() + if self.hot { 0.5 } else { -0.5 }
     }
 
     pub fn update(&mut self, current_temp: f64) -> bool {
-        self.state = current_temp <= self.hysteresis();
-        self.state
+        self.hot = current_temp <= self.hysteresis();
+        self.hot
     }
 
     pub fn set_present(&mut self, present: bool) {
@@ -44,6 +44,6 @@ impl Thermostazv {
     }
 
     pub fn is_hot(&self) -> bool {
-        self.state
+        self.hot
     }
 }

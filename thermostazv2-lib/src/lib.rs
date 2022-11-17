@@ -45,9 +45,7 @@ pub enum Cmd {
     Ping,
     Pong,
     Set(Relay),
-    //Sensor(SensorResult),
     Status(Relay, SensorResult),
-    //Syn(Handshake),
 }
 
 pub static HEADER: [u8; 4] = [0xFF, 0xFF, 0xFD, 0x00];

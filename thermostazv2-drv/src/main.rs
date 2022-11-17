@@ -35,8 +35,8 @@ async fn main() {
         SensorResult::Err(SensorErr::Uninitialized),
     )));
     let thermostazv_clone = Arc::clone(&thermostazv);
-    let status_clone = Arc::clone(&status);
     let thermostazv_infl = Arc::clone(&thermostazv);
+    let status_clone = Arc::clone(&status);
     let status_infl = Arc::clone(&status);
 
     let mut uart_port = tokio_serial::new(uart_port, 2_000_000)
@@ -49,8 +49,8 @@ async fn main() {
     let (to_uart_send, to_uart_receive) = unbounded();
     let (to_mqtt_send, to_mqtt_receive) = unbounded();
     let (from_mqtt_send, from_mqtt_receive) = unbounded();
-    let to_uart_send_clone = to_uart_send.clone();
-    let to_mqtt_send_clone = to_mqtt_send.clone();
+    let to_uart_clone = to_uart_send.clone();
+    let to_mqtt_clone = to_mqtt_send.clone();
 
     let lwt = LastWill::new("/azv/thermostazv/lwt", "Offline", QoS::AtLeastOnce, false);
 
@@ -98,20 +98,17 @@ async fn main() {
             let cmd = msg.payload;
             if topic == "/azv/thermostazv/cmd" {
                 if cmd == "c" {
-                    to_uart_send_clone.send(Cmd::Set(Relay::Hot)).await.unwrap();
+                    to_uart_clone.send(Cmd::Set(Relay::Hot)).await.unwrap();
                 } else if cmd == "f" {
-                    to_uart_send_clone
-                        .send(Cmd::Set(Relay::Cold))
-                        .await
-                        .unwrap();
+                    to_uart_clone.send(Cmd::Set(Relay::Cold)).await.unwrap();
                 } else if cmd == "s" {
-                    let st_clone;
+                    let st;
                     {
-                        st_clone = *status_clone.read().unwrap();
+                        st = *status_clone.read().unwrap();
                     }
-                    to_mqtt_send_clone.send(st_clone).await.unwrap();
+                    to_mqtt_clone.send(st).await.unwrap();
                 } else if cmd == "p" {
-                    to_uart_send_clone.send(Cmd::Ping).await.unwrap();
+                    to_uart_clone.send(Cmd::Ping).await.unwrap();
                 }
             } else if topic == "/azv/thermostazv/presence" {
                 if cmd == "présent" {
@@ -133,7 +130,7 @@ async fn main() {
                                 update = thermostazv.update(temp);
                             }
                             let new_relay = if update { Relay::Hot } else { Relay::Cold };
-                            to_uart_send_clone.send(Cmd::Set(new_relay)).await.unwrap();
+                            to_uart_clone.send(Cmd::Set(new_relay)).await.unwrap();
                             println!("temperature: {} => chauffe: {}", temp, update);
                             let st;
                             {
@@ -142,7 +139,7 @@ async fn main() {
 
                             if let Cmd::Status(old_relay, _) = st {
                                 if old_relay != new_relay {
-                                    to_mqtt_send_clone.send(Cmd::Set(new_relay)).await.unwrap();
+                                    to_mqtt_clone.send(Cmd::Set(new_relay)).await.unwrap();
                                 }
                             }
                         }

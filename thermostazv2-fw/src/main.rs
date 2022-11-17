@@ -376,9 +376,7 @@ mod app {
             serial.write(&HEADER).ok();
             let conf = bincode::config::standard();
             let mut buf = [0u8; 32];
-            let size =
-                encode_into_slice::<&Cmd, bincode::config::Configuration>(&cmd, &mut buf, conf)
-                    .unwrap();
+            let size = encode_into_slice(cmd, &mut buf, conf).unwrap();
             serial.write(&[size.try_into().unwrap()]).ok();
             //rprintln!("encoded {} : {:?}", size, buf);
             serial.write(&buf[0..size]).ok();
