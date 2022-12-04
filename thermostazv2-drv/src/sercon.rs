@@ -75,7 +75,7 @@ impl Encoder<Cmd> for SerialConnection {
 }
 
 impl SerialConnection {
-    pub fn new() -> Self {
+    pub const fn new() -> Self {
         Self {
             header_index: 0,
             buffer: [0; 32],

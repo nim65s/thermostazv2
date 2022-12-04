@@ -6,7 +6,7 @@ pub struct Thermostazv {
 }
 
 impl Thermostazv {
-    pub fn new() -> Self {
+    pub const fn new() -> Self {
         Self {
             present: true,
             hot: false,
@@ -39,11 +39,11 @@ impl Thermostazv {
         self.present = present;
     }
 
-    pub fn is_present(&self) -> bool {
+    pub const fn is_present(&self) -> bool {
         self.present
     }
 
-    pub fn is_hot(&self) -> bool {
+    pub const fn is_hot(&self) -> bool {
         self.hot
     }
 }
