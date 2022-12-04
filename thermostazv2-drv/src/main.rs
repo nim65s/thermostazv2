@@ -231,8 +231,8 @@ async fn main() {
                 points.push(
                     DataPoint::builder("azviot")
                         .tag("device", "thermostazv")
-                        .field("Temperature", temperature as f64)
-                        .field("Humidity", humidity.unwrap() as f64)
+                        .field("Temperature", f64::from(temperature))
+                        .field("Humidity", f64::from(humidity.unwrap()))
                         .build()
                         .unwrap(),
                 );

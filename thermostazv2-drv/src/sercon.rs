@@ -70,8 +70,8 @@ impl Encoder<Cmd> for SerialConnection {
 }
 
 impl SerialConnection {
-    pub fn new() -> SerialConnection {
-        SerialConnection {
+    pub fn new() -> Self {
+        Self {
             header_index: 0,
             buffer: [0; 32],
             buffer_index: 0,

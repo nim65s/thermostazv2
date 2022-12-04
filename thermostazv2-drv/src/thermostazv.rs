@@ -6,8 +6,8 @@ pub struct Thermostazv {
 }
 
 impl Thermostazv {
-    pub fn new() -> Thermostazv {
-        Thermostazv {
+    pub fn new() -> Self {
+        Self {
             present: true,
             hot: false,
         }
