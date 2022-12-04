@@ -22,33 +22,31 @@ impl Decoder for SerialConnection {
     fn decode(&mut self, src: &mut BytesMut) -> Result<Option<Self::Item>, Self::Error> {
         tracing::trace!("decoding...");
         for byte in src.split().iter() {
-            tracing::trace!("decode {}", byte);
             match self.header_index.cmp(&HEADER.len()) {
                 Ordering::Less => {
                     if *byte == HEADER[self.header_index] {
+                        tracing::trace!("good header {}", byte);
                         self.header_index += 1;
                     } else {
                         tracing::error!("wrong header {}: {}", self.header_index, byte);
                         self.header_index = 0;
-                        self.buffer_index = 0;
-                        self.buffer_size = 0;
                     }
                 }
                 Ordering::Equal => {
                     self.buffer_index = 0;
                     self.header_index += 1;
                     self.buffer_size = (*byte).into();
+                    tracing::trace!("header OK, read next {} bytes", byte);
                 }
                 Ordering::Greater => {
                     self.buffer[self.buffer_index] = *byte;
                     self.buffer_index += 1;
                     if self.buffer_index == self.buffer_size {
                         self.header_index = 0;
-                        self.buffer_index = 0;
-                        self.buffer_size = 0;
+                        tracing::trace!("{} bytes were read, we should have a Cmd", self.buffer_size);
                         let config = bincode::config::standard();
                         return decode_from_slice(&self.buffer[..self.buffer_size], config)
-                            .map(|(ret, _)| ret)
+                            .map(|(ret, _)| Some(ret))
                             .map_err(|e| {
                                 ThermostazvError::Bincode(format!("decode error: {:?}", e))
                             });

@@ -20,6 +20,7 @@ type UartReader =
 
 pub async fn serial_writer(to_uart_receive: Receiver<Cmd>, mut uart_writer: UartWriter) {
     while let Ok(cmd) = to_uart_receive.recv().await {
+        tracing::debug!("sending {:?} to serial", cmd);
         if let Err(e) = uart_writer.send(cmd).await {
             tracing::error!("serial_writer: I/O error on uart writer: {:?}", e);
         }
@@ -34,7 +35,7 @@ pub async fn serial_reader(
 ) -> ThermostazvResult {
     loop {
         if let Some(Ok(cmd)) = uart_reader.next().await {
-            tracing::info!("serial received {:?}", cmd);
+            tracing::debug!("serial received {:?}", cmd);
             match cmd {
                 Cmd::Ping => to_uart_send.send(Cmd::Pong).await?,
                 Cmd::Status(r, s) => {
