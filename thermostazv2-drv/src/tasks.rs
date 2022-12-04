@@ -18,16 +18,14 @@ type UartWriter =
 type UartReader =
     stream::SplitStream<tokio_util::codec::Framed<tokio_serial::SerialStream, SerialConnection>>;
 
-#[tracing::instrument]
 pub async fn serial_writer(to_uart_receive: Receiver<Cmd>, mut uart_writer: UartWriter) {
     while let Ok(cmd) = to_uart_receive.recv().await {
         if let Err(e) = uart_writer.send(cmd).await {
-            eprintln!("serial_writer: I/O error on uart writer: {:?}", e);
+            tracing::error!("serial_writer: I/O error on uart writer: {:?}", e);
         }
     }
 }
 
-#[tracing::instrument]
 pub async fn serial_reader(
     mut uart_reader: UartReader,
     to_uart_send: Sender<Cmd>,
@@ -36,7 +34,7 @@ pub async fn serial_reader(
 ) -> ThermostazvResult {
     loop {
         if let Some(Ok(cmd)) = uart_reader.next().await {
-            //println!("serial received {:?}", cmd);
+            tracing::info!("serial received {:?}", cmd);
             match cmd {
                 Cmd::Ping => to_uart_send.send(Cmd::Pong).await?,
                 Cmd::Status(r, s) => {
@@ -48,14 +46,13 @@ pub async fn serial_reader(
                     })?;
                     *st = Cmd::Status(r, s);
                 }
-                Cmd::Get | Cmd::Set(_) => eprintln!("wrong cmd received: {:?}", cmd),
+                Cmd::Get | Cmd::Set(_) => tracing::error!("wrong cmd received: {:?}", cmd),
                 Cmd::Pong => to_mqtt_send.send(cmd).await?,
             }
         }
     }
 }
 
-#[tracing::instrument]
 pub async fn mqtt_receive(
     to_uart_clone: Sender<Cmd>,
     from_mqtt_receive: Receiver<Publish>,
@@ -64,7 +61,7 @@ pub async fn mqtt_receive(
     to_mqtt_clone: Sender<Cmd>,
 ) -> ThermostazvResult {
     while let Ok(msg) = from_mqtt_receive.recv().await {
-        //println!("mqtt received {:?}", msg);
+        tracing::info!("mqtt received {:?}", msg);
         let topic = msg.topic;
         let cmd = msg.payload;
         if topic == "/azv/thermostazv/cmd" {
@@ -137,14 +134,13 @@ pub async fn mqtt_receive(
                         }
                     }
                 }
-                Err(e) => eprintln!("Error {} decoding json for '{:?}'", e, &cmd),
+                Err(e) => tracing::error!("Error {} decoding json for '{:?}'", e, &cmd),
             }
         }
     }
     Ok(())
 }
 
-#[tracing::instrument]
 pub async fn mqtt_publish(
     to_mqtt_receive: Receiver<Cmd>,
     thermostazv_clone: Arc<RwLock<Thermostazv>>,
@@ -153,7 +149,7 @@ pub async fn mqtt_publish(
     while let Ok(cmd) = to_mqtt_receive.recv().await {
         let msg = match cmd {
             Cmd::Get | Cmd::Ping => {
-                eprintln!("wrong command to publish to MQTT");
+                tracing::error!("wrong command to publish to MQTT");
                 None
             }
             Cmd::Set(Relay::Hot) => Some("allumage du chauffe-eau".to_string()),
@@ -187,7 +183,6 @@ pub async fn mqtt_publish(
     Ok(())
 }
 
-#[tracing::instrument]
 pub async fn influx(
     client: influxdb2::Client,
     thermostazv_infl: Arc<RwLock<Thermostazv>>,

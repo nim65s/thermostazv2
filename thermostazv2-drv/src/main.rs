@@ -53,7 +53,9 @@ struct Args {
 
 #[tokio::main]
 async fn main() -> ThermostazvResult {
-    let subscriber = tracing_subscriber::FmtSubscriber::new();
+    let subscriber = tracing_subscriber::FmtSubscriber::builder()
+        .with_max_level(tracing::Level::TRACE)
+        .finish();
     tracing::subscriber::set_global_default(subscriber)?;
 
     let args = Args::parse();
@@ -132,7 +134,7 @@ async fn main() -> ThermostazvResult {
     loop {
         match connection.poll().await {
             Ok(Event::Incoming(Packet::Publish(p))) => from_mqtt_send.send(p).await?,
-            Err(n) => eprintln!("incoming mqtt packet Err:  {:?}", n),
+            Err(n) => tracing::error!("incoming mqtt packet Err:  {:?}", n),
             Ok(_) => {}
         }
     }

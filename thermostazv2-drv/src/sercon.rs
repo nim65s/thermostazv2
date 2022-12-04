@@ -18,14 +18,17 @@ impl Decoder for SerialConnection {
     type Item = Cmd;
     type Error = ThermostazvError;
 
+    #[tracing::instrument]
     fn decode(&mut self, src: &mut BytesMut) -> Result<Option<Self::Item>, Self::Error> {
+        tracing::trace!("decoding...");
         for byte in src.split().iter() {
+            tracing::trace!("decode {}", byte);
             match self.header_index.cmp(&HEADER.len()) {
                 Ordering::Less => {
                     if *byte == HEADER[self.header_index] {
                         self.header_index += 1;
                     } else {
-                        eprintln!("wrong header {}: {}", self.header_index, byte);
+                        tracing::error!("wrong header {}: {}", self.header_index, byte);
                         self.header_index = 0;
                         self.buffer_index = 0;
                         self.buffer_size = 0;
@@ -60,7 +63,9 @@ impl Decoder for SerialConnection {
 impl Encoder<Cmd> for SerialConnection {
     type Error = ThermostazvError;
 
+    #[tracing::instrument]
     fn encode(&mut self, cmd: Cmd, buf: &mut BytesMut) -> Result<(), Self::Error> {
+        tracing::trace!("encode {:?}", cmd);
         let mut dst = [0; 32];
         let config = bincode::config::standard();
         let size = encode_into_slice(cmd, &mut dst, config)
