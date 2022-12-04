@@ -198,7 +198,7 @@ pub async fn influx(
     status_infl: Arc<RwLock<Cmd>>,
     infl_buck: &str,
 ) -> ThermostazvResult {
-    println!("starting influx");
+    println!("starting influx.");
     loop {
         let relay;
         let absent;
