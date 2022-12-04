@@ -1,4 +1,4 @@
-//! copy paste from https://github.com/nim65s/aht20/blob/master/src/lib.rs to remove delays for
+//! copy paste from <https://github.com/nim65s/aht20/blob/master/src/lib.rs> to remove delays for
 //! rtic
 
 use {
@@ -10,7 +10,7 @@ use {
 const I2C_ADDRESS: u8 = 0x38;
 const CRC_ALGO: Algorithm<u8> = Algorithm {
     width: 16,
-    poly: 0b110001,
+    poly: 0b11_0001,
     init: 0xFF,
     refin: false,
     refout: false,
@@ -44,7 +44,7 @@ pub enum Error<E> {
 
 impl<E> core::convert::From<E> for Error<E> {
     fn from(e: E) -> Self {
-        Error::Bus(e)
+        Self::Bus(e)
     }
 }
 
@@ -55,12 +55,12 @@ pub struct Humidity {
 
 impl Humidity {
     /// Humidity converted to Relative Humidity %.
-    pub fn rh(&self) -> f32 {
-        100.0 * (self.h as f32) / ((1 << 20) as f32)
+    pub fn rh(&self) -> f64 {
+        100.0 * f64::from(self.h) / f64::from(1 << 20)
     }
 
     /// Raw humidity reading.
-    pub fn raw(&self) -> u32 {
+    pub const fn raw(&self) -> u32 {
         self.h
     }
 }
@@ -72,12 +72,12 @@ pub struct Temperature {
 
 impl Temperature {
     /// Temperature converted to Celsius.
-    pub fn celsius(&self) -> f32 {
-        (200.0 * (self.t as f32) / ((1 << 20) as f32)) - 50.0
+    pub fn celsius(&self) -> f64 {
+        200.0 * f64::from(self.t) / f64::from(1 << 20) - 50.0
     }
 
     /// Raw temperature reading.
-    pub fn raw(&self) -> u32 {
+    pub const fn raw(&self) -> u32 {
         self.t
     }
 }
@@ -163,8 +163,17 @@ where
         }
 
         // Extract humitidy and temperature values from data
-        let hum = ((buf[1] as u32) << 12) | ((buf[2] as u32) << 4) | ((buf[3] as u32) >> 4);
-        let temp = (((buf[3] as u32) & 0x0f) << 16) | ((buf[4] as u32) << 8) | (buf[5] as u32);
+        let buf: [u32; 7] = [
+            u32::from(buf[0]),
+            u32::from(buf[1]),
+            u32::from(buf[2]),
+            u32::from(buf[3]),
+            u32::from(buf[4]),
+            u32::from(buf[5]),
+            u32::from(buf[6]),
+        ];
+        let hum = (buf[1] << 12) | (buf[2] << 4) | (buf[3] >> 4);
+        let temp = ((buf[3] & 0x0f) << 16) | (buf[4] << 8) | buf[5];
 
         Ok((Humidity { h: hum }, Temperature { t: temp }))
     }

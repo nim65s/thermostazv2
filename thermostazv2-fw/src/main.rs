@@ -13,6 +13,7 @@ mod aht20rtic;
 mod app {
     use crate::aht20rtic::{Aht20Rtic, Error};
     use bincode::{decode_from_slice, encode_into_slice};
+    use core::cmp::Ordering;
     use cortex_m::asm::delay;
     use rtt_target::{rprintln, rtt_init_print};
     use stm32f1xx_hal::gpio::PinState;
@@ -23,7 +24,7 @@ mod app {
     use stm32f1xx_hal::usb::{Peripheral, UsbBus, UsbBusType};
     use stm32f1xx_hal::watchdog::IndependentWatchdog;
     use systick_monotonic::{fugit::Duration, Systick};
-    use thermostazv2_lib::*;
+    use thermostazv2_lib::{Cmd, Relay, SensorErr, SensorOk, SensorResult, HEADER};
     use usb_device::prelude::*;
 
     type I2c = BlockingI2c<I2C1, (PB6<Alternate<OpenDrain>>, PB7<Alternate<OpenDrain>>)>;
@@ -181,45 +182,47 @@ mod app {
         let buffer_size = cx.local.buffer_size;
 
         for &byte in &buf[..count] {
-            if *header_index < HEADER.len() {
-                if byte == HEADER[*header_index] {
-                    *header_index += 1;
-                } else {
-                    rprintln!("wrong header {}: {}", *header_index, byte);
-                    *header_index = 0;
-                    *buffer_index = 0;
-                    *buffer_size = 0;
-                }
-            } else if *header_index == HEADER.len() {
-                *buffer_index = 0;
-                *header_index += 1;
-                *buffer_size = byte.into();
-            } else {
-                buffer[*buffer_index] = byte;
-                *buffer_index += 1;
-                if *buffer_index == *buffer_size {
-                    let conf = bincode::config::standard();
-                    if let Ok((cmd, _)) = decode_from_slice::<Cmd, bincode::config::Configuration>(
-                        &buffer[..*buffer_size],
-                        conf,
-                    ) {
-                        //rprintln!("decode {} / {}: {:?}", size, count, cmd);
-                        rprintln!("received {:?}", cmd);
-                        match cmd {
-                            Cmd::Get => send_status::spawn().unwrap(),
-                            Cmd::Set(r) => set_relay::spawn(r).unwrap(),
-                            Cmd::Ping => send::spawn(Cmd::Pong).unwrap(),
-                            Cmd::Status(_, _) => {
-                                rprintln!("wrong cmd received: {:?}", cmd)
-                            }
-                            Cmd::Pong => rprintln!("pong"),
-                        }
+            match (*header_index).cmp(&HEADER.len()) {
+                Ordering::Less => {
+                    if byte == HEADER[*header_index] {
+                        *header_index += 1;
                     } else {
-                        rprintln!("Couldn't decode {:?}", &buffer[..*buffer_size]);
+                        rprintln!("wrong header {}: {}", *header_index, byte);
+                        *header_index = 0;
+                        *buffer_index = 0;
+                        *buffer_size = 0;
                     }
-                    *header_index = 0;
+                }
+                Ordering::Equal => {
                     *buffer_index = 0;
-                    *buffer_size = 0;
+                    *header_index += 1;
+                    *buffer_size = byte.into();
+                }
+                Ordering::Greater => {
+                    buffer[*buffer_index] = byte;
+                    *buffer_index += 1;
+                    if *buffer_index == *buffer_size {
+                        let conf = bincode::config::standard();
+                        if let Ok((cmd, _)) = decode_from_slice::<Cmd, bincode::config::Configuration>(
+                            &buffer[..*buffer_size],
+                            conf,
+                        ) {
+                            //rprintln!("decode {} / {}: {:?}", size, count, cmd);
+                            rprintln!("received {:?}", cmd);
+                            match cmd {
+                                Cmd::Get => send_status::spawn().unwrap(),
+                                Cmd::Set(r) => set_relay::spawn(r).unwrap(),
+                                Cmd::Ping => send::spawn(Cmd::Pong).unwrap(),
+                                Cmd::Status(_, _) => rprintln!("wrong cmd received: {:?}", cmd),
+                                Cmd::Pong => rprintln!("pong"),
+                            }
+                        } else {
+                            rprintln!("Couldn't decode {:?}", &buffer[..*buffer_size]);
+                        }
+                        *header_index = 0;
+                        *buffer_index = 0;
+                        *buffer_size = 0;
+                    }
                 }
             }
         }
@@ -237,11 +240,10 @@ mod app {
 
             let mut buf = [0u8; 32];
 
-            match serial.read(&mut buf) {
-                Ok(count) if count > 0 => {
+            if let Ok(count) = serial.read(&mut buf) {
+                if count > 0 {
                     decode::spawn(buf, count).unwrap();
                 }
-                _ => {}
             }
         });
     }
@@ -257,11 +259,10 @@ mod app {
             }
             let mut buf = [0u8; 32];
 
-            match serial.read(&mut buf) {
-                Ok(count) if count > 0 => {
+            if let Ok(count) = serial.read(&mut buf) {
+                if count > 0 {
                     decode::spawn(buf, count).unwrap();
                 }
-                _ => {}
             }
         });
     }
@@ -364,7 +365,7 @@ mod app {
                 },
                 *sensor,
             );
-            send::spawn(cmd).unwrap()
+            send::spawn(cmd).unwrap();
         });
     }
 
