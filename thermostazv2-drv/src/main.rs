@@ -1,10 +1,10 @@
 use async_channel::unbounded;
+use clap::Parser;
 use futures::{stream, stream::StreamExt, SinkExt};
 use influxdb2::models::DataPoint;
 use rumqttc::mqttbytes::v4::Publish;
 use rumqttc::{AsyncClient, Event, LastWill, MqttOptions, Packet, QoS};
 use serde_json::Value;
-use std::env;
 use std::sync::{Arc, RwLock};
 use std::time::Duration;
 use thermostazv2_lib::{Cmd, Relay, SensorErr, SensorResult};
@@ -18,16 +18,41 @@ mod thermostazv;
 use crate::sercon::SerialConnection;
 use crate::thermostazv::Thermostazv;
 
+#[derive(Parser, Debug)]
+#[command(author, version, about, long_about = None)]
+struct Args {
+    #[arg(env = "UART_PORT", default_value = "/dev/thermostazv2")]
+    uart_port: String,
+
+    //#[arg(env = "UART_BAUD", default_value = 2_000_000)]
+    //uart_baud: u32,
+    #[arg(env = "MQTT_HOST", default_value = "totoro")]
+    mqtt_host: String,
+
+    //#[arg(env = "MQTT_PORT", default_value = 1883)]
+    //mqtt_Port: i32,
+    #[arg(env = "MQTT_USER", default_value = "nim")]
+    mqtt_user: String,
+
+    #[arg(env = "MQTT_PASS")]
+    mqtt_pass: String,
+
+    #[arg(env = "INFL_BUCK", default_value = "azviot")]
+    infl_buck: String,
+
+    #[arg(env = "INFL_ORG", default_value = "azviot")]
+    infl_org: String,
+
+    #[arg(env = "INFL_URL", default_value = "http://localhost:8086")]
+    infl_url: String,
+
+    #[arg(env = "INFL_TOKEN")]
+    infl_token: String,
+}
+
 #[tokio::main]
 async fn main() {
-    let uart_port = env::var("UART_PORT").unwrap_or_else(|_| "/dev/thermostazv2".into());
-    let mqtt_host = env::var("MQTT_HOST").unwrap_or_else(|_| "totoro".into());
-    let mqtt_user = env::var("MQTT_USER").unwrap_or_else(|_| "nim".into());
-    let mqtt_pass = env::var("MQTT_PASS").unwrap();
-    let infl_buck = env::var("INFL_BUCK").unwrap_or_else(|_| "azviot".into());
-    let infl_org = env::var("INFL_ORG").unwrap_or_else(|_| "azviot".into());
-    let infl_url = env::var("INFL_URL").unwrap_or_else(|_| "http://localhost:8086".into());
-    let infl_token = env::var("INFL_TOKEN").unwrap();
+    let args = Args::parse();
 
     let thermostazv = Arc::new(RwLock::new(Thermostazv::new()));
     let status = Arc::new(RwLock::new(Cmd::Status(
@@ -39,7 +64,7 @@ async fn main() {
     let status_clone = Arc::clone(&status);
     let status_infl = Arc::clone(&status);
 
-    let mut uart_port = tokio_serial::new(uart_port, 2_000_000)
+    let mut uart_port = tokio_serial::new(args.uart_port, 2_000_000) // args.uard_baud)
         .open_native_async()
         .expect("Failed to open serial port");
     uart_port.set_exclusive(false).unwrap();
@@ -54,10 +79,10 @@ async fn main() {
 
     let lwt = LastWill::new("/azv/thermostazv/lwt", "Offline", QoS::AtLeastOnce, false);
 
-    let mut mqttoptions = MqttOptions::new("thermostazv2", mqtt_host, 1883);
+    let mut mqttoptions = MqttOptions::new("thermostazv2", args.mqtt_host, 1883); //args.mqtt_port);
     mqttoptions.set_keep_alive(Duration::from_secs(5));
     mqttoptions.set_last_will(lwt);
-    mqttoptions.set_credentials(mqtt_user, mqtt_pass);
+    mqttoptions.set_credentials(args.mqtt_user, args.mqtt_pass);
 
     let (client, mut connection) = AsyncClient::new(mqttoptions, 10);
 
@@ -200,7 +225,7 @@ async fn main() {
     });
 
     task::spawn(async move {
-        let client = influxdb2::Client::new(infl_url, infl_org, infl_token);
+        let client = influxdb2::Client::new(args.infl_url, args.infl_org, args.infl_token);
         loop {
             let relay;
             let absent;
@@ -238,7 +263,7 @@ async fn main() {
                 );
             }
             client
-                .write(&infl_buck, stream::iter(points))
+                .write(&args.infl_buck, stream::iter(points))
                 .await
                 .unwrap();
             sleep(Duration::from_secs(300)).await;
