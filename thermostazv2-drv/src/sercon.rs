@@ -43,12 +43,15 @@ impl Decoder for SerialConnection {
                     self.buffer_index += 1;
                     if self.buffer_index == self.buffer_size {
                         self.header_index = 0;
-                        tracing::trace!("{} bytes were read, we should have a Cmd", self.buffer_size);
+                        tracing::trace!(
+                            "{} bytes were read, we should have a Cmd",
+                            self.buffer_size
+                        );
                         let config = bincode::config::standard();
                         return decode_from_slice(&self.buffer[..self.buffer_size], config)
                             .map(|(ret, _)| Some(ret))
                             .map_err(|e| {
-                                ThermostazvError::Bincode(format!("decode error: {:?}", e))
+                                ThermostazvError::Bincode(format!("decode error: {e:?}"))
                             });
                     }
                 }
@@ -67,12 +70,12 @@ impl Encoder<Cmd> for SerialConnection {
         let mut dst = [0; 32];
         let config = bincode::config::standard();
         let size = encode_into_slice(cmd, &mut dst, config)
-            .map_err(|e| ThermostazvError::Bincode(format!("encode error: {:?}", e)))?;
+            .map_err(|e| ThermostazvError::Bincode(format!("encode error: {e:?}")))?;
         buf.reserve(size + 5);
         buf.put(&HEADER[..]);
         buf.put_u8(
             size.try_into()
-                .map_err(|e| ThermostazvError::Bincode(format!("encode error: {:?}", e)))?,
+                .map_err(|e| ThermostazvError::Bincode(format!("encode error: {e:?}")))?,
         );
         buf.put(&dst[..size]);
         Ok(())

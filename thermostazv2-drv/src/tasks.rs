@@ -41,8 +41,7 @@ pub async fn serial_reader(
                 Cmd::Status(r, s) => {
                     let mut st = status.write().map_err(|e| {
                         ThermostazvError::Poison(format!(
-                            "Failed to acquire write lock on status in serial_reader {}",
-                            e
+                            "Failed to acquire write lock on status in serial_reader {e}"
                         ))
                     })?;
                     *st = Cmd::Status(r, s);
@@ -73,8 +72,7 @@ pub async fn mqtt_receive(
             } else if cmd == "s" {
                 let st = *status_clone.read().map_err(|e| {
                     ThermostazvError::Poison(format!(
-                        "Failed to acquire read lock on status_clone in mqtt_receive {}",
-                        e
+                        "Failed to acquire read lock on status_clone in mqtt_receive {e}"
                     ))
                 })?;
                 to_mqtt_clone.send(st).await?;
@@ -85,16 +83,14 @@ pub async fn mqtt_receive(
             if cmd == "présent" {
                 let mut thermostazv = thermostazv.write().map_err(|e| {
                     ThermostazvError::Poison(format!(
-                        "Failed to acquire write lock on thermostazv in mqtt_receive {}",
-                        e
+                        "Failed to acquire write lock on thermostazv in mqtt_receive {e}"
                     ))
                 })?;
                 thermostazv.set_present(true);
             } else if cmd == "absent" {
                 let mut thermostazv = thermostazv.write().map_err(|e| {
                     ThermostazvError::Poison(format!(
-                        "Failed to acquire write lock on thermostazv in mqtt_receive {}",
-                        e
+                        "Failed to acquire write lock on thermostazv in mqtt_receive {e}"
                     ))
                 })?;
                 thermostazv.set_present(false);
@@ -109,8 +105,7 @@ pub async fn mqtt_receive(
                             {
                                 let mut thermostazv = thermostazv.write().map_err(|e| {
                                     ThermostazvError::Poison(format!(
-                        "Failed to acquire write lock on thermostazv in mqtt_receive {}",
-                        e
+                        "Failed to acquire write lock on thermostazv in mqtt_receive {e}"
                     ))
                                 })?;
                                 update = thermostazv.update(temp);
@@ -121,8 +116,7 @@ pub async fn mqtt_receive(
                             {
                                 st = *status_clone.read().map_err(|e| {
                                     ThermostazvError::Poison(format!(
-                        "Failed to acquire read lock on status_clone in mqtt_receive {}",
-                        e
+                        "Failed to acquire read lock on status_clone in mqtt_receive {e}"
                     ))
                                 })?;
                             }
@@ -162,15 +156,14 @@ pub async fn mqtt_publish(
                     .read()
                     .map_err(|e| {
                         ThermostazvError::Poison(format!(
-                            "Failed to acquire read lock on thermostazv_clone in mqtt_publish {}",
-                            e
+                            "Failed to acquire read lock on thermostazv_clone in mqtt_publish {e}"
                         ))
                     })?
                     .is_present(),
                 relay,
                 match sensor {
                     SensorResult::Ok(s) => format!("{}°C, {}%", s.celsius(), s.rh()),
-                    SensorResult::Err(e) => format!("error {:?}", e),
+                    SensorResult::Err(e) => format!("error {e:?}"),
                 }
             )),
         };
@@ -199,8 +192,7 @@ pub async fn influx(
         {
             let th = thermostazv_infl.read().map_err(|e| {
                 ThermostazvError::Poison(format!(
-                    "Failed to acquire read lock on thermostazv_infl in influx {}",
-                    e
+                    "Failed to acquire read lock on thermostazv_infl in influx {e}"
                 ))
             })?;
             absent = !th.is_present();
@@ -210,8 +202,7 @@ pub async fn influx(
         {
             let st = status_infl.read().map_err(|e| {
                 ThermostazvError::Poison(format!(
-                    "Failed to acquire read lock on status_infl in influx {}",
-                    e
+                    "Failed to acquire read lock on status_infl in influx {e}"
                 ))
             })?;
             if let Cmd::Status(_, SensorResult::Ok(sensor)) = *st {

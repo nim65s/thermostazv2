@@ -11,10 +11,12 @@ pub struct SensorOk {
 }
 
 impl SensorOk {
-    #[must_use] pub fn rh(&self) -> f32 {
+    #[must_use]
+    pub fn rh(&self) -> f32 {
         100.0 * (self.h as f32) / ((1 << 20) as f32)
     }
-    #[must_use] pub fn celsius(&self) -> f32 {
+    #[must_use]
+    pub fn celsius(&self) -> f32 {
         (200.0 * (self.t as f32) / ((1 << 20) as f32)) - 50.0
     }
 }

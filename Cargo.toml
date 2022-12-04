@@ -1,0 +1,7 @@
+[workspace]
+
+members = [
+    "thermostazv2-drv",
+    "thermostazv2-fw",
+    "thermostazv2-lib",
+]
