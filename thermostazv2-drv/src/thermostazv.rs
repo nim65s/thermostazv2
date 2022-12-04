@@ -1,5 +1,6 @@
 use chrono::{Local, Timelike};
 
+#[derive(Debug)]
 pub struct Thermostazv {
     present: bool,
     hot: bool,

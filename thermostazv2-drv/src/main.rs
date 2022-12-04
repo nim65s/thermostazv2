@@ -53,6 +53,9 @@ struct Args {
 
 #[tokio::main]
 async fn main() -> ThermostazvResult {
+    let subscriber = tracing_subscriber::FmtSubscriber::new();
+    tracing::subscriber::set_global_default(subscriber)?;
+
     let args = Args::parse();
 
     let thermostazv = Arc::new(RwLock::new(Thermostazv::new()));

@@ -6,6 +6,7 @@ use core::cmp::Ordering;
 use thermostazv2_lib::{Cmd, HEADER};
 use tokio_util::codec::{Decoder, Encoder};
 
+#[derive(Debug)]
 pub struct SerialConnection {
     header_index: usize,
     buffer: [u8; 32],

@@ -18,23 +18,22 @@ type UartWriter =
 type UartReader =
     stream::SplitStream<tokio_util::codec::Framed<tokio_serial::SerialStream, SerialConnection>>;
 
+#[tracing::instrument]
 pub async fn serial_writer(to_uart_receive: Receiver<Cmd>, mut uart_writer: UartWriter) {
-    println!("starting serial_writer.");
     while let Ok(cmd) = to_uart_receive.recv().await {
         if let Err(e) = uart_writer.send(cmd).await {
             eprintln!("serial_writer: I/O error on uart writer: {:?}", e);
         }
     }
-    println!("closing serial_writer.");
 }
 
+#[tracing::instrument]
 pub async fn serial_reader(
     mut uart_reader: UartReader,
     to_uart_send: Sender<Cmd>,
     status: Arc<RwLock<Cmd>>,
     to_mqtt_send: Sender<Cmd>,
 ) -> ThermostazvResult {
-    println!("starting serial_reader.");
     loop {
         if let Some(Ok(cmd)) = uart_reader.next().await {
             //println!("serial received {:?}", cmd);
@@ -54,9 +53,9 @@ pub async fn serial_reader(
             }
         }
     }
-    //println!("closing serial_reader.");
 }
 
+#[tracing::instrument]
 pub async fn mqtt_receive(
     to_uart_clone: Sender<Cmd>,
     from_mqtt_receive: Receiver<Publish>,
@@ -64,7 +63,6 @@ pub async fn mqtt_receive(
     status_clone: Arc<RwLock<Cmd>>,
     to_mqtt_clone: Sender<Cmd>,
 ) -> ThermostazvResult {
-    println!("starting mqtt_receive.");
     while let Ok(msg) = from_mqtt_receive.recv().await {
         //println!("mqtt received {:?}", msg);
         let topic = msg.topic;
@@ -144,16 +142,15 @@ pub async fn mqtt_receive(
             }
         }
     }
-    println!("closing mqtt_receive.");
     Ok(())
 }
 
+#[tracing::instrument]
 pub async fn mqtt_publish(
     to_mqtt_receive: Receiver<Cmd>,
     thermostazv_clone: Arc<RwLock<Thermostazv>>,
     client: AsyncClient,
 ) -> ThermostazvResult {
-    println!("starting mqtt_publish.");
     while let Ok(cmd) = to_mqtt_receive.recv().await {
         let msg = match cmd {
             Cmd::Get | Cmd::Ping => {
@@ -188,17 +185,16 @@ pub async fn mqtt_publish(
                 .await?;
         }
     }
-    println!("closing mqtt_publish.");
     Ok(())
 }
 
+#[tracing::instrument]
 pub async fn influx(
     client: influxdb2::Client,
     thermostazv_infl: Arc<RwLock<Thermostazv>>,
     status_infl: Arc<RwLock<Cmd>>,
     infl_buck: &str,
 ) -> ThermostazvResult {
-    println!("starting influx.");
     loop {
         let relay;
         let absent;
@@ -246,5 +242,4 @@ pub async fn influx(
         client.write(infl_buck, stream::iter(points)).await?;
         sleep(Duration::from_secs(300)).await;
     }
-    //println!("closing influx");
 }
