@@ -119,7 +119,6 @@ pub async fn mqtt_receive(
                             }
                             let new_relay = if update { Relay::Hot } else { Relay::Cold };
                             to_uart_clone.send(Cmd::Set(new_relay)).await?;
-                            println!("temperature: {} => chauffe: {}", temp, update);
                             let st;
                             {
                                 st = *status_clone.read().map_err(|e| {

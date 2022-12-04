@@ -31,8 +31,10 @@ impl Thermostazv {
         self.target() + if self.hot { 0.5 } else { -0.5 }
     }
 
-    pub fn update(&mut self, current_temp: f64) -> bool {
-        self.hot = current_temp <= self.hysteresis();
+    pub fn update(&mut self, current: f64) -> bool {
+        let h = self.hysteresis();
+        self.hot = current <= h;
+        tracing::info!("temperature: {} / {} => chauffe: {}", current, h, self.hot);
         self.hot
     }
 
