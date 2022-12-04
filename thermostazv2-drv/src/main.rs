@@ -1,3 +1,4 @@
+use anyhow::Context;
 use async_channel::unbounded;
 use clap::Parser;
 use futures::stream::StreamExt;
@@ -9,11 +10,13 @@ use tokio::task;
 use tokio_serial::SerialPortBuilderExt;
 use tokio_util::codec::Decoder;
 
+mod err;
 mod sercon;
 mod tasks;
 mod thermostazv;
+use crate::err::ThermostazvResult;
 use crate::sercon::SerialConnection;
-use crate::tasks::*;
+use crate::tasks::{influx, mqtt_publish, mqtt_receive, serial_reader, serial_writer};
 use crate::thermostazv::Thermostazv;
 
 #[derive(Parser, Debug)]
@@ -49,7 +52,7 @@ struct Args {
 }
 
 #[tokio::main]
-async fn main() {
+async fn main() -> ThermostazvResult {
     let args = Args::parse();
 
     let thermostazv = Arc::new(RwLock::new(Thermostazv::new()));
@@ -64,8 +67,8 @@ async fn main() {
 
     let mut uart_port = tokio_serial::new(args.uart_port, 2_000_000) // args.uard_baud)
         .open_native_async()
-        .expect("Failed to open serial port");
-    uart_port.set_exclusive(false).unwrap();
+        .context("Failed to open serial port")?;
+    uart_port.set_exclusive(false)?;
 
     let (uart_writer, uart_reader) = SerialConnection::new().framed(uart_port).split();
 
@@ -103,20 +106,16 @@ async fn main() {
 
     client
         .subscribe("/azv/thermostazv/cmd", QoS::AtMostOnce)
-        .await
-        .unwrap();
+        .await?;
     client
         .subscribe("/azv/thermostazv/presence", QoS::AtMostOnce)
-        .await
-        .unwrap();
+        .await?;
     client
         .subscribe("tele/tasmota_43D8FD/SENSOR", QoS::AtMostOnce)
-        .await
-        .unwrap();
+        .await?;
     client
         .publish("/azv/thermostazv/log", QoS::AtLeastOnce, false, "Hi !")
-        .await
-        .unwrap();
+        .await?;
 
     // mqtt publisher task
     task::spawn(async move { mqtt_publish(to_mqtt_receive, thermostazv_clone, client).await });
@@ -129,7 +128,7 @@ async fn main() {
     // mqtt publish (main) task
     loop {
         match connection.poll().await {
-            Ok(Event::Incoming(Packet::Publish(p))) => from_mqtt_send.send(p).await.unwrap(),
+            Ok(Event::Incoming(Packet::Publish(p))) => from_mqtt_send.send(p).await?,
             Err(n) => eprintln!("incoming mqtt packet Err:  {:?}", n),
             Ok(_) => {}
         }

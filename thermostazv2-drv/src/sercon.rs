@@ -1,8 +1,8 @@
+use crate::err::ThermostazvError;
 use bincode::{decode_from_slice, encode_into_slice};
 use bytes::BufMut;
 use bytes::BytesMut;
 use core::cmp::Ordering;
-use std::io;
 use thermostazv2_lib::{Cmd, HEADER};
 use tokio_util::codec::{Decoder, Encoder};
 
@@ -15,10 +15,9 @@ pub struct SerialConnection {
 
 impl Decoder for SerialConnection {
     type Item = Cmd;
-    type Error = io::Error;
+    type Error = ThermostazvError;
 
     fn decode(&mut self, src: &mut BytesMut) -> Result<Option<Self::Item>, Self::Error> {
-        let mut ret = None;
         for byte in src.split().iter() {
             match self.header_index.cmp(&HEADER.len()) {
                 Ordering::Less => {
@@ -40,35 +39,37 @@ impl Decoder for SerialConnection {
                     self.buffer[self.buffer_index] = *byte;
                     self.buffer_index += 1;
                     if self.buffer_index == self.buffer_size {
-                        let config = bincode::config::standard();
-                        if let Ok((cmd, _)) =
-                            decode_from_slice(&self.buffer[..self.buffer_size], config)
-                        {
-                            ret = Some(cmd);
-                        } else {
-                            eprintln!("couldn't decode {:?}", &self.buffer[..self.buffer_size]);
-                        }
                         self.header_index = 0;
                         self.buffer_index = 0;
                         self.buffer_size = 0;
+                        let config = bincode::config::standard();
+                        return decode_from_slice(&self.buffer[..self.buffer_size], config)
+                            .map(|(ret, _)| ret)
+                            .map_err(|e| {
+                                ThermostazvError::Bincode(format!("decode error: {:?}", e))
+                            });
                     }
                 }
             }
         }
-        Ok(ret)
+        Ok(None)
     }
 }
 
 impl Encoder<Cmd> for SerialConnection {
-    type Error = io::Error;
+    type Error = ThermostazvError;
 
     fn encode(&mut self, cmd: Cmd, buf: &mut BytesMut) -> Result<(), Self::Error> {
         let mut dst = [0; 32];
         let config = bincode::config::standard();
-        let size = encode_into_slice(cmd, &mut dst, config).unwrap();
+        let size = encode_into_slice(cmd, &mut dst, config)
+            .map_err(|e| ThermostazvError::Bincode(format!("encode error: {:?}", e)))?;
         buf.reserve(size + 5);
         buf.put(&HEADER[..]);
-        buf.put_u8(size.try_into().unwrap());
+        buf.put_u8(
+            size.try_into()
+                .map_err(|e| ThermostazvError::Bincode(format!("encode error: {:?}", e)))?,
+        );
         buf.put(&dst[..size]);
         Ok(())
     }
