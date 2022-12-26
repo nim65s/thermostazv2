@@ -33,16 +33,9 @@ repos:
     rev: v1.0
     hooks:
     -   id: cargo-check
-        args: ["-p", "thermostazv2-drv"]
+        args: ["-p", "thermostazv2-drv", "-p", "thermostazv2-lib"]
     -   id: clippy
-        args: ["-p", "thermostazv2-drv", "--", "-W", "clippy::pedantic", "-W", "clippy::nursery", "-W", "clippy::unwrap_used", "-W", "clippy::expect_used"]
--   repo: https://github.com/doublify/pre-commit-rust
-    rev: v1.0
-    hooks:
-    -   id: cargo-check
-        args: ["-p", "thermostazv2-lib"]
-    -   id: clippy
-        args: ["-p", "thermostazv2-lib", "--", "-W", "clippy::pedantic", "-W", "clippy::nursery", "-W", "clippy::unwrap_used", "-W", "clippy::expect_used"]
+        args: ["-p", "thermostazv2-drv", "-p", "thermostazv2-lib", "--", "-W", "clippy::pedantic", "-W", "clippy::nursery", "-W", "clippy::unwrap_used", "-W", "clippy::expect_used"]
 -   repo: https://github.com/doublify/pre-commit-rust
     rev: v1.0
     hooks:
