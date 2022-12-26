@@ -97,8 +97,10 @@ mod app {
             USB_BUS.replace(UsbBus::new(usb));
         }
 
+        #[allow(clippy::unwrap_used)]
         let serial = usbd_serial::SerialPort::new(unsafe { USB_BUS.as_ref().unwrap() });
 
+        #[allow(clippy::unwrap_used)]
         let usb_dev = UsbDeviceBuilder::new(
             unsafe { USB_BUS.as_ref().unwrap() },
             UsbVidPid(0x6565, 0x0003),
@@ -137,7 +139,9 @@ mod app {
         let led = gpioc
             .pc13
             .into_push_pull_output_with_state(&mut gpioc.crh, PinState::Low);
+        #[allow(clippy::unwrap_used)]
         blink::spawn_after(Duration::<u64, 1, 1000>::secs(1)).unwrap();
+        #[allow(clippy::unwrap_used)]
         wait_calibrate::spawn_after(Duration::<u64, 1, 1000>::millis(20)).unwrap();
         rprintln!("init end");
 
@@ -209,6 +213,7 @@ mod app {
                         ) {
                             //rprintln!("decode {} / {}: {:?}", size, count, cmd);
                             rprintln!("received {:?}", cmd);
+                            #[allow(clippy::unwrap_used)]
                             match cmd {
                                 Cmd::Get => send_status::spawn().unwrap(),
                                 Cmd::Set(r) => set_relay::spawn(r).unwrap(),
@@ -242,6 +247,7 @@ mod app {
 
             if let Ok(count) = serial.read(&mut buf) {
                 if count > 0 {
+                    #[allow(clippy::unwrap_used)]
                     decode::spawn(buf, count).unwrap();
                 }
             }
@@ -261,6 +267,7 @@ mod app {
 
             if let Ok(count) = serial.read(&mut buf) {
                 if count > 0 {
+                    #[allow(clippy::unwrap_used)]
                     decode::spawn(buf, count).unwrap();
                 }
             }
@@ -278,6 +285,7 @@ mod app {
             *cx.local.state = true;
         }
 
+        #[allow(clippy::unwrap_used)]
         blink::spawn_after(Duration::<u64, 1, 1000>::secs(1)).unwrap();
         //start_read::spawn().unwrap();
     }
@@ -298,6 +306,7 @@ mod app {
             Ok(_) => rprintln!("calibrated"),
             Err(e) => rprintln!("NOT CALIBRATED: {:?}", e),
         });
+        #[allow(clippy::unwrap_used)]
         start_read::spawn_after(Duration::<u64, 1, 1000>::millis(10)).unwrap();
     }
 
@@ -306,8 +315,10 @@ mod app {
         let mut aht20rtic = cx.shared.aht20rtic;
         aht20rtic.lock(|aht20rtic| {
             if aht20rtic.busy().unwrap() {
+                #[allow(clippy::unwrap_used)]
                 wait_calibrate::spawn_after(Duration::<u64, 1, 1000>::millis(10)).unwrap();
             } else {
+                #[allow(clippy::unwrap_used)]
                 calibrate::spawn().unwrap();
             }
         });
@@ -317,6 +328,7 @@ mod app {
     fn start_read(cx: start_read::Context) {
         let mut aht20rtic = cx.shared.aht20rtic;
         aht20rtic.lock(|aht20rtic| aht20rtic.start_read().unwrap());
+        #[allow(clippy::unwrap_used)]
         wait_read::spawn_after(Duration::<u64, 1, 1000>::millis(80)).unwrap();
     }
 
@@ -325,8 +337,10 @@ mod app {
         let mut aht20rtic = cx.shared.aht20rtic;
         aht20rtic.lock(|aht20rtic| {
             if aht20rtic.busy().unwrap() {
+                #[allow(clippy::unwrap_used)]
                 wait_read::spawn_after(Duration::<u64, 1, 1000>::millis(10)).unwrap();
             } else {
+                #[allow(clippy::unwrap_used)]
                 end_read::spawn().unwrap();
             }
         });
@@ -348,7 +362,9 @@ mod app {
             };
             *sensor = msg;
         });
+        #[allow(clippy::unwrap_used)]
         send_status::spawn().unwrap();
+        #[allow(clippy::unwrap_used)]
         start_read::spawn_after(Duration::<u64, 1, 1000>::secs(5)).unwrap();
     }
 
@@ -365,6 +381,7 @@ mod app {
                 },
                 *sensor,
             );
+            #[allow(clippy::unwrap_used)]
             send::spawn(cmd).unwrap();
         });
     }
@@ -373,14 +390,16 @@ mod app {
     fn send(cx: send::Context, cmd: Cmd) {
         rprintln!("send {:?}", cmd);
         let mut serial = cx.shared.serial;
+        let conf = bincode::config::standard();
+        let mut buf = [0u8; 32];
         serial.lock(|serial| {
-            serial.write(&HEADER).ok();
-            let conf = bincode::config::standard();
-            let mut buf = [0u8; 32];
-            let size = encode_into_slice(cmd, &mut buf, conf).unwrap();
-            serial.write(&[size.try_into().unwrap()]).ok();
-            //rprintln!("encoded {} : {:?}", size, buf);
-            serial.write(&buf[0..size]).ok();
+            if let Ok(size) = encode_into_slice(cmd, &mut buf, conf) {
+                if let Ok(size_u8) = size.try_into() {
+                    serial.write(&HEADER).ok();
+                    serial.write(&[size_u8]).ok();
+                    serial.write(&buf[0..size]).ok();
+                }
+            }
         });
     }
 }

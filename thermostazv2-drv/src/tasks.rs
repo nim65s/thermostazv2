@@ -220,8 +220,8 @@ pub async fn influx(
             points.push(
                 DataPoint::builder("azviot")
                     .tag("device", "thermostazv")
-                    .field("Temperature", f64::from(temperature))
-                    .field("Humidity", f64::from(humidity))
+                    .field("Temperature", temperature)
+                    .field("Humidity", humidity)
                     .build()?,
             );
         }
