@@ -7,11 +7,9 @@
 
 use panic_rtt_target as _;
 
-mod aht20rtic;
-
 #[rtic::app(device = stm32f1xx_hal::pac, peripherals = true, dispatchers = [SPI1, SPI2, SPI3, ADC1_2, ADC3, CAN_RX1, CAN_SCE])]
 mod app {
-    use crate::aht20rtic::{Aht20Rtic, Error};
+    use aht20::{Aht20NoDelay, Error};
     use bincode::{decode_from_slice, encode_into_slice};
     use core::cmp::Ordering;
     use cortex_m::asm::delay;
@@ -33,7 +31,7 @@ mod app {
     struct Shared {
         usb_dev: UsbDevice<'static, UsbBusType>,
         serial: usbd_serial::SerialPort<'static, UsbBusType>,
-        aht20rtic: Aht20Rtic<I2c>,
+        aht20: Aht20NoDelay<I2c>,
         relay: PB8<Output<PushPull>>,
         sensor: SensorResult,
     }
@@ -130,11 +128,10 @@ mod app {
             1000,
         );
 
-        let aht20rtic = Aht20Rtic::new(i2c);
-        if aht20rtic.is_err() {
-            rprintln!("ahrt20 err");
-        }
-        let aht20rtic = aht20rtic.unwrap();
+        let Ok(aht20) = Aht20NoDelay::new(i2c) else {
+            rprintln!("i2c write err");
+            panic!();
+        };
 
         let led = gpioc
             .pc13
@@ -161,7 +158,7 @@ mod app {
             Shared {
                 usb_dev,
                 serial,
-                aht20rtic,
+                aht20,
                 relay,
                 sensor,
             },
@@ -299,10 +296,10 @@ mod app {
         });
     }
 
-    #[task(shared = [aht20rtic])]
+    #[task(shared = [aht20])]
     fn calibrate(cx: calibrate::Context) {
-        let mut aht20rtic = cx.shared.aht20rtic;
-        aht20rtic.lock(|aht20rtic| match aht20rtic.calibrated() {
+        let mut aht20 = cx.shared.aht20;
+        aht20.lock(|aht20| match aht20.calibrated() {
             Ok(_) => rprintln!("calibrated"),
             Err(e) => rprintln!("NOT CALIBRATED: {:?}", e),
         });
@@ -310,11 +307,15 @@ mod app {
         start_read::spawn_after(Duration::<u64, 1, 1000>::millis(10)).unwrap();
     }
 
-    #[task(shared = [aht20rtic])]
+    #[task(shared = [aht20])]
     fn wait_calibrate(cx: wait_calibrate::Context) {
-        let mut aht20rtic = cx.shared.aht20rtic;
-        aht20rtic.lock(|aht20rtic| {
-            if aht20rtic.busy().unwrap() {
+        let mut aht20 = cx.shared.aht20;
+        aht20.lock(|aht20| {
+            let Ok(busy) = aht20.busy() else {
+                rprintln!("i2c write_read error");
+                panic!();
+            };
+            if busy {
                 #[allow(clippy::unwrap_used)]
                 wait_calibrate::spawn_after(Duration::<u64, 1, 1000>::millis(10)).unwrap();
             } else {
@@ -324,19 +325,24 @@ mod app {
         });
     }
 
-    #[task(shared = [aht20rtic])]
+    #[task(shared = [aht20])]
     fn start_read(cx: start_read::Context) {
-        let mut aht20rtic = cx.shared.aht20rtic;
-        aht20rtic.lock(|aht20rtic| aht20rtic.start_read().unwrap());
+        let mut aht20 = cx.shared.aht20;
+        #[allow(clippy::unwrap_used)]
+        aht20.lock(|aht20| aht20.start_read().unwrap());
         #[allow(clippy::unwrap_used)]
         wait_read::spawn_after(Duration::<u64, 1, 1000>::millis(80)).unwrap();
     }
 
-    #[task(shared = [aht20rtic])]
+    #[task(shared = [aht20])]
     fn wait_read(cx: wait_read::Context) {
-        let mut aht20rtic = cx.shared.aht20rtic;
-        aht20rtic.lock(|aht20rtic| {
-            if aht20rtic.busy().unwrap() {
+        let mut aht20 = cx.shared.aht20;
+        aht20.lock(|aht20| {
+            let Ok(busy) = aht20.busy() else {
+                rprintln!("i2c write_read error");
+                panic!();
+            };
+            if busy {
                 #[allow(clippy::unwrap_used)]
                 wait_read::spawn_after(Duration::<u64, 1, 1000>::millis(10)).unwrap();
             } else {
@@ -346,12 +352,12 @@ mod app {
         });
     }
 
-    #[task(shared = [aht20rtic, sensor])]
+    #[task(shared = [aht20, sensor])]
     fn end_read(cx: end_read::Context) {
         let sensor = cx.shared.sensor;
-        let aht20rtic = cx.shared.aht20rtic;
-        (sensor, aht20rtic).lock(|sensor, aht20rtic| {
-            let msg = match aht20rtic.end_read() {
+        let aht20 = cx.shared.aht20;
+        (sensor, aht20).lock(|sensor, aht20| {
+            let msg = match aht20.end_read() {
                 Ok((h, t)) => SensorResult::Ok(SensorOk {
                     h: h.raw(),
                     t: t.raw(),
