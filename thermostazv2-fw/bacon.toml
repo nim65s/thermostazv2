@@ -1,5 +1,0 @@
-default_job = "clippy-plus"
-
-[jobs.clippy-plus]
-command = ["cargo", "clippy", "--color", "always", "--", "-W", "clippy::pedantic", "-W", "clippy::nursery", "-W", "clippy::expect_used"]
-need_stdout = false
