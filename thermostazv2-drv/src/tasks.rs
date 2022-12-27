@@ -1,6 +1,6 @@
 use crate::err::{ThermostazvError, ThermostazvResult};
 use crate::sercon::SerialConnection;
-use crate::thermostazv::Thermostazv;
+use crate::thermostazv::{TCmd, TCmdSender, TWatchReceiver};
 use async_channel::{Receiver, Sender};
 use futures::stream;
 use futures::{SinkExt, StreamExt};
@@ -56,7 +56,7 @@ pub async fn serial_reader(
 pub async fn mqtt_receive(
     to_uart_clone: Sender<Cmd>,
     from_mqtt_receive: Receiver<Publish>,
-    thermostazv: Arc<RwLock<Thermostazv>>,
+    set_thermostazv: TCmdSender,
     status_clone: Arc<RwLock<Cmd>>,
     to_mqtt_clone: Sender<Cmd>,
 ) -> ThermostazvResult {
@@ -80,52 +80,17 @@ pub async fn mqtt_receive(
                 to_uart_clone.send(Cmd::Ping).await?;
             }
         } else if topic == "/azv/thermostazv/presence" {
-            if cmd == "présent" {
-                let mut thermostazv = thermostazv.write().map_err(|e| {
-                    ThermostazvError::Poison(format!(
-                        "Failed to acquire write lock on thermostazv in mqtt_receive {e}"
-                    ))
-                })?;
-                thermostazv.set_present(true);
-            } else if cmd == "absent" {
-                let mut thermostazv = thermostazv.write().map_err(|e| {
-                    ThermostazvError::Poison(format!(
-                        "Failed to acquire write lock on thermostazv in mqtt_receive {e}"
-                    ))
-                })?;
-                thermostazv.set_present(false);
-            }
+            set_thermostazv
+                .send(TCmd::SetPresent(cmd == "présent"))
+                .await?;
         } else if topic == "tele/tasmota_43D8FD/SENSOR" {
             let decoded: Result<Value, _> = serde_json::from_slice(&cmd);
+            // TODO keep happy path happy
             match decoded {
                 Ok(v) => {
                     if let Value::Number(temperature) = &v["SI7021"]["Temperature"] {
-                        let update;
                         if let Some(temp) = temperature.as_f64() {
-                            {
-                                let mut thermostazv = thermostazv.write().map_err(|e| {
-                                    ThermostazvError::Poison(format!(
-                        "Failed to acquire write lock on thermostazv in mqtt_receive {e}"
-                    ))
-                                })?;
-                                update = thermostazv.update(temp);
-                            }
-                            let new_relay = if update { Relay::Hot } else { Relay::Cold };
-                            to_uart_clone.send(Cmd::Set(new_relay)).await?;
-                            let st;
-                            {
-                                st = *status_clone.read().map_err(|e| {
-                                    ThermostazvError::Poison(format!(
-                        "Failed to acquire read lock on status_clone in mqtt_receive {e}"
-                    ))
-                                })?;
-                            }
-
-                            if let Cmd::Status(old_relay, _) = st {
-                                if old_relay != new_relay {
-                                    to_mqtt_clone.send(Cmd::Set(new_relay)).await?;
-                                }
-                            }
+                            set_thermostazv.send(TCmd::Current(temp)).await?;
                         }
                     }
                 }
@@ -138,7 +103,7 @@ pub async fn mqtt_receive(
 
 pub async fn mqtt_publish(
     to_mqtt_receive: Receiver<Cmd>,
-    thermostazv_clone: Arc<RwLock<Thermostazv>>,
+    get_thermostazv: TWatchReceiver,
     client: AsyncClient,
 ) -> ThermostazvResult {
     while let Ok(cmd) = to_mqtt_receive.recv().await {
@@ -152,14 +117,7 @@ pub async fn mqtt_publish(
             Cmd::Pong => Some("pong".to_string()),
             Cmd::Status(relay, sensor) => Some(format!(
                 "présent: {}, relay: {:?}, garage: {}",
-                thermostazv_clone
-                    .read()
-                    .map_err(|e| {
-                        ThermostazvError::Poison(format!(
-                            "Failed to acquire read lock on thermostazv_clone in mqtt_publish {e}"
-                        ))
-                    })?
-                    .is_present(),
+                get_thermostazv.borrow().present,
                 relay,
                 match sensor {
                     SensorResult::Ok(s) => format!("{}°C, {}%", s.celsius(), s.rh()),
@@ -179,26 +137,25 @@ pub async fn mqtt_publish(
 
 pub async fn influx(
     client: influxdb2::Client,
-    thermostazv_infl: Arc<RwLock<Thermostazv>>,
+    get_thermostazv: TWatchReceiver,
     status_infl: Arc<RwLock<Cmd>>,
     infl_buck: &str,
 ) -> ThermostazvResult {
     loop {
-        let relay;
-        let absent;
-        let target;
+        let mut points = vec![];
+        {
+            let thermostazv = get_thermostazv.borrow();
+            points.push(
+                DataPoint::builder("azviot")
+                    .tag("device", "thermostazv")
+                    .field("relay", thermostazv.hot)
+                    .field("absent", !thermostazv.present)
+                    .field("targetf", thermostazv.hysteresis())
+                    .build()?,
+            );
+        }
         let mut temperature = None;
         let mut humidity = None;
-        {
-            let th = thermostazv_infl.read().map_err(|e| {
-                ThermostazvError::Poison(format!(
-                    "Failed to acquire read lock on thermostazv_infl in influx {e}"
-                ))
-            })?;
-            absent = !th.is_present();
-            relay = th.is_hot();
-            target = th.hysteresis();
-        }
         {
             let st = status_infl.read().map_err(|e| {
                 ThermostazvError::Poison(format!(
@@ -210,12 +167,7 @@ pub async fn influx(
                 humidity = Some(sensor.rh());
             }
         }
-        let mut points = vec![DataPoint::builder("azviot")
-            .tag("device", "thermostazv")
-            .field("relay", relay)
-            .field("absent", absent)
-            .field("targetf", target)
-            .build()?];
+
         if let (Some(temperature), Some(humidity)) = (temperature, humidity) {
             points.push(
                 DataPoint::builder("azviot")

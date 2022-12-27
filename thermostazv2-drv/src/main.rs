@@ -60,13 +60,15 @@ async fn main() -> ThermostazvResult {
 
     let args = Args::parse();
 
-    let thermostazv = Arc::new(RwLock::new(Thermostazv::new()?));
+    let mut thermostazv = Thermostazv::new()?;
+    let (thermostazv_cmd_send, thermostazv_cmd_receive) = async_channel::unbounded();
+    let (thermostazv_watch_send, thermostazv_watch_receive) =
+        tokio::sync::watch::channel(thermostazv.clone());
+
     let status = Arc::new(RwLock::new(Cmd::Status(
         Relay::Cold,
         SensorResult::Err(SensorErr::Uninitialized),
     )));
-    let thermostazv_clone = Arc::clone(&thermostazv);
-    let thermostazv_infl = Arc::clone(&thermostazv);
     let status_clone = Arc::clone(&status);
     let status_infl = Arc::clone(&status);
 
@@ -102,7 +104,7 @@ async fn main() -> ThermostazvResult {
         mqtt_receive(
             to_uart_clone,
             from_mqtt_receive,
-            thermostazv,
+            thermostazv_cmd_send,
             status_clone,
             to_mqtt_clone,
         )
@@ -123,12 +125,27 @@ async fn main() -> ThermostazvResult {
         .await?;
 
     // mqtt publisher task
-    task::spawn(async move { mqtt_publish(to_mqtt_receive, thermostazv_clone, client).await });
+    task::spawn(
+        async move { mqtt_publish(to_mqtt_receive, thermostazv_watch_receive, client).await },
+    );
 
     let client = influxdb2::Client::new(args.infl_url, args.infl_org, args.infl_token);
-    task::spawn(
-        async move { influx(client, thermostazv_infl, status_infl, &args.infl_buck).await },
-    );
+    let thermostazv_watch_receive = thermostazv_watch_send.subscribe();
+    task::spawn(async move {
+        influx(
+            client,
+            thermostazv_watch_receive,
+            status_infl,
+            &args.infl_buck,
+        )
+        .await
+    });
+
+    task::spawn(async move {
+        thermostazv
+            .manage(thermostazv_cmd_receive, thermostazv_watch_send)
+            .await
+    });
 
     // mqtt publish (main) task
     loop {
