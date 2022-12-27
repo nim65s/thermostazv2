@@ -4,7 +4,6 @@ use clap::Parser;
 use futures::stream::StreamExt;
 use rumqttc::{AsyncClient, Event, LastWill, MqttOptions, Packet, QoS};
 use std::str::FromStr;
-use std::sync::{Arc, RwLock};
 use std::time::Duration;
 use thermostazv2_lib::{Cmd, Relay, SensorErr, SensorResult};
 use tokio::task;
@@ -14,10 +13,12 @@ use tracing::Level;
 
 mod err;
 mod sercon;
+mod status;
 mod tasks;
 mod thermostazv;
 use crate::err::ThermostazvResult;
 use crate::sercon::SerialConnection;
+use crate::status::manager;
 use crate::tasks::{influx, mqtt_publish, mqtt_receive, serial_reader, serial_writer};
 use crate::thermostazv::Thermostazv;
 
@@ -72,12 +73,9 @@ async fn main() -> ThermostazvResult {
     let (thermostazv_watch_send, thermostazv_watch_receive) =
         tokio::sync::watch::channel(thermostazv.clone());
 
-    let status = Arc::new(RwLock::new(Cmd::Status(
-        Relay::Cold,
-        SensorResult::Err(SensorErr::Uninitialized),
-    )));
-    let status_clone = Arc::clone(&status);
-    let status_infl = Arc::clone(&status);
+    let status = Cmd::Status(Relay::Cold, SensorResult::Err(SensorErr::Uninitialized));
+    let (status_cmd_send, status_cmd_receive) = async_channel::unbounded();
+    let (status_watch_send, status_watch_receive) = tokio::sync::watch::channel(status);
 
     let mut uart_port = tokio_serial::new(args.uart_port, args.uart_baud)
         .open_native_async()
@@ -102,9 +100,9 @@ async fn main() -> ThermostazvResult {
     let (client, mut connection) = AsyncClient::new(mqttoptions, 10);
 
     task::spawn(async move { serial_writer(to_uart_receive, uart_writer).await });
-    task::spawn(
-        async move { serial_reader(uart_reader, to_uart_send, status, to_mqtt_send).await },
-    );
+    task::spawn(async move {
+        serial_reader(uart_reader, to_uart_send, status_cmd_send, to_mqtt_send).await
+    });
 
     // mqtt receiver task
     task::spawn(async move {
@@ -112,7 +110,7 @@ async fn main() -> ThermostazvResult {
             to_uart_clone,
             from_mqtt_receive,
             thermostazv_cmd_send,
-            status_clone,
+            status_watch_receive,
             to_mqtt_clone,
         )
         .await
@@ -138,11 +136,12 @@ async fn main() -> ThermostazvResult {
 
     let client = influxdb2::Client::new(args.infl_url, args.infl_org, args.infl_token);
     let thermostazv_watch_receive = thermostazv_watch_send.subscribe();
+    let status_watch_receive = status_watch_send.subscribe();
     task::spawn(async move {
         influx(
             client,
             thermostazv_watch_receive,
-            status_infl,
+            status_watch_receive,
             &args.infl_buck,
         )
         .await
@@ -150,9 +149,11 @@ async fn main() -> ThermostazvResult {
 
     task::spawn(async move {
         thermostazv
-            .manage(thermostazv_cmd_receive, thermostazv_watch_send)
+            .manager(thermostazv_cmd_receive, thermostazv_watch_send)
             .await
     });
+
+    task::spawn(async move { manager(status_cmd_receive, status_watch_send).await });
 
     // mqtt publish (main) task
     loop {

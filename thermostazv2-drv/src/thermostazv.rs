@@ -107,7 +107,7 @@ impl Thermostazv {
         // TODO: if self.hot changed, notify serial and mqtt
     }
 
-    pub async fn manage(
+    pub async fn manager(
         &mut self,
         recv_cmd: TCmdReceiver,
         pub_state: TWatchSender,

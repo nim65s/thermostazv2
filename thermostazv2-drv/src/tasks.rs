@@ -1,5 +1,6 @@
-use crate::err::{ThermostazvError, ThermostazvResult};
+use crate::err::ThermostazvResult;
 use crate::sercon::SerialConnection;
+use crate::status::{SCmdSender, SWatchReceiver};
 use crate::thermostazv::{TCmd, TCmdSender, TWatchReceiver};
 use async_channel::{Receiver, Sender};
 use futures::stream;
@@ -7,7 +8,6 @@ use futures::{SinkExt, StreamExt};
 use influxdb2::models::DataPoint;
 use rumqttc::{AsyncClient, Publish, QoS};
 use serde_json::Value;
-use std::sync::{Arc, RwLock};
 use std::time::Duration;
 use thermostazv2_lib::{Cmd, Relay, SensorResult};
 use tokio::time::sleep;
@@ -30,7 +30,7 @@ pub async fn serial_writer(to_uart_receive: Receiver<Cmd>, mut uart_writer: Uart
 pub async fn serial_reader(
     mut uart_reader: UartReader,
     to_uart_send: Sender<Cmd>,
-    status: Arc<RwLock<Cmd>>,
+    set_status: SCmdSender,
     to_mqtt_send: Sender<Cmd>,
 ) -> ThermostazvResult {
     loop {
@@ -38,14 +38,7 @@ pub async fn serial_reader(
             tracing::debug!("serial received {:?}", cmd);
             match cmd {
                 Cmd::Ping => to_uart_send.send(Cmd::Pong).await?,
-                Cmd::Status(r, s) => {
-                    let mut st = status.write().map_err(|e| {
-                        ThermostazvError::Poison(format!(
-                            "Failed to acquire write lock on status in serial_reader {e}"
-                        ))
-                    })?;
-                    *st = Cmd::Status(r, s);
-                }
+                Cmd::Status(r, s) => set_status.send(Cmd::Status(r, s)).await?,
                 Cmd::Get | Cmd::Set(_) => tracing::error!("wrong cmd received: {:?}", cmd),
                 Cmd::Pong => to_mqtt_send.send(cmd).await?,
             }
@@ -57,7 +50,7 @@ pub async fn mqtt_receive(
     to_uart_clone: Sender<Cmd>,
     from_mqtt_receive: Receiver<Publish>,
     set_thermostazv: TCmdSender,
-    status_clone: Arc<RwLock<Cmd>>,
+    get_status: SWatchReceiver,
     to_mqtt_clone: Sender<Cmd>,
 ) -> ThermostazvResult {
     while let Ok(msg) = from_mqtt_receive.recv().await {
@@ -70,12 +63,8 @@ pub async fn mqtt_receive(
             } else if cmd == "f" {
                 to_uart_clone.send(Cmd::Set(Relay::Cold)).await?;
             } else if cmd == "s" {
-                let st = *status_clone.read().map_err(|e| {
-                    ThermostazvError::Poison(format!(
-                        "Failed to acquire read lock on status_clone in mqtt_receive {e}"
-                    ))
-                })?;
-                to_mqtt_clone.send(st).await?;
+                let status = *get_status.borrow();
+                to_mqtt_clone.send(status).await?;
             } else if cmd == "p" {
                 to_uart_clone.send(Cmd::Ping).await?;
             }
@@ -138,7 +127,7 @@ pub async fn mqtt_publish(
 pub async fn influx(
     client: influxdb2::Client,
     get_thermostazv: TWatchReceiver,
-    status_infl: Arc<RwLock<Cmd>>,
+    get_status: SWatchReceiver,
     infl_buck: &str,
 ) -> ThermostazvResult {
     loop {
@@ -157,12 +146,7 @@ pub async fn influx(
         let mut temperature = None;
         let mut humidity = None;
         {
-            let st = status_infl.read().map_err(|e| {
-                ThermostazvError::Poison(format!(
-                    "Failed to acquire read lock on status_infl in influx {e}"
-                ))
-            })?;
-            if let Cmd::Status(_, SensorResult::Ok(sensor)) = *st {
+            if let Cmd::Status(_, SensorResult::Ok(sensor)) = *get_status.borrow() {
                 temperature = Some(sensor.celsius());
                 humidity = Some(sensor.rh());
             }
