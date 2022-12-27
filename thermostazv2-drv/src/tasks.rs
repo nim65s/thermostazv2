@@ -18,13 +18,15 @@ type UartWriter =
 type UartReader =
     stream::SplitStream<tokio_util::codec::Framed<tokio_serial::SerialStream, SerialConnection>>;
 
-pub async fn serial_writer(to_uart_receive: Receiver<Cmd>, mut uart_writer: UartWriter) {
+pub async fn serial_writer(
+    to_uart_receive: Receiver<Cmd>,
+    mut uart_writer: UartWriter,
+) -> ThermostazvResult {
     while let Ok(cmd) = to_uart_receive.recv().await {
         tracing::debug!("sending {:?} to serial", cmd);
-        if let Err(e) = uart_writer.send(cmd).await {
-            tracing::error!("serial_writer: I/O error on uart writer: {:?}", e);
-        }
+        uart_writer.send(cmd).await?;
     }
+    Ok(())
 }
 
 pub async fn serial_reader(
@@ -73,17 +75,11 @@ pub async fn mqtt_receive(
                 .send(TCmd::SetPresent(cmd == "présent"))
                 .await?;
         } else if topic == "tele/tasmota_43D8FD/SENSOR" {
-            let decoded: Result<Value, _> = serde_json::from_slice(&cmd);
-            // TODO keep happy path happy
-            match decoded {
-                Ok(v) => {
-                    if let Value::Number(temperature) = &v["SI7021"]["Temperature"] {
-                        if let Some(temp) = temperature.as_f64() {
-                            set_thermostazv.send(TCmd::Current(temp)).await?;
-                        }
-                    }
+            let decoded: Value = serde_json::from_slice(&cmd)?;
+            if let Value::Number(temperature) = &decoded["SI7021"]["Temperature"] {
+                if let Some(temp) = temperature.as_f64() {
+                    set_thermostazv.send(TCmd::Current(temp)).await?;
                 }
-                Err(e) => tracing::error!("Error {} decoding json for '{:?}'", e, &cmd),
             }
         }
     }
@@ -131,6 +127,7 @@ pub async fn influx(
     infl_buck: &str,
 ) -> ThermostazvResult {
     loop {
+        sleep(Duration::from_secs(300)).await;
         let mut points = vec![];
         {
             let thermostazv = get_thermostazv.borrow();
@@ -162,6 +159,5 @@ pub async fn influx(
             );
         }
         client.write(infl_buck, stream::iter(points)).await?;
-        sleep(Duration::from_secs(300)).await;
     }
 }
