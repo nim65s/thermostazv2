@@ -60,7 +60,7 @@ async fn main() -> ThermostazvResult {
 
     let args = Args::parse();
 
-    let thermostazv = Arc::new(RwLock::new(Thermostazv::new()));
+    let thermostazv = Arc::new(RwLock::new(Thermostazv::new()?));
     let status = Arc::new(RwLock::new(Cmd::Status(
         Relay::Cold,
         SensorResult::Err(SensorErr::Uninitialized),

@@ -10,4 +10,10 @@ pub enum ThermostazvError {
 
     #[error("Bincode error: {0}")]
     Bincode(String),
+
+    #[error("Toml deserialization error: {0}")]
+    TomlDe(#[from] toml::de::Error),
+
+    #[error("Toml serialization error: {0}")]
+    TomlSer(#[from] toml::ser::Error),
 }
