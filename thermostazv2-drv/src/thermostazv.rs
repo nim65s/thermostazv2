@@ -110,6 +110,7 @@ pub struct TManager {
     recv_cmd: TCmdReceiver,
     pub_state: TWatchSender,
     to_uart_send: Sender<Cmd>,
+    shutdown_receiver: tokio::sync::watch::Receiver<bool>,
 }
 
 impl TManager {
@@ -118,43 +119,49 @@ impl TManager {
         recv_cmd: TCmdReceiver,
         pub_state: TWatchSender,
         to_uart_send: Sender<Cmd>,
+        shutdown_receiver: tokio::sync::watch::Receiver<bool>,
     ) -> Self {
         Self {
             thermostazv,
             recv_cmd,
             pub_state,
             to_uart_send,
+            shutdown_receiver,
         }
     }
 
     pub async fn manage(&mut self) -> ThermostazvResult {
-        while let Ok(req) = self.recv_cmd.recv().await {
-            match req {
-                TCmd::SetDay(val) => self.thermostazv.day = val,
-                TCmd::SetNight(val) => self.thermostazv.night = val,
-                TCmd::SetEmpty(val) => self.thermostazv.empty = val,
-                TCmd::SetMorning(val) => self.thermostazv.morning = val,
-                TCmd::SetEvening(val) => self.thermostazv.evening = val,
-                TCmd::SetPresent(val) => self.thermostazv.present = val,
-                TCmd::SetHot(val) => self.thermostazv.hot = val,
-                TCmd::Current(val) => {
-                    if self.thermostazv.update(val) {
-                        self.to_uart_send
-                            .send(Cmd::Set(Relay::from(self.thermostazv.hot)))
-                            .await?;
+        loop {
+            tokio::select! {
+                _ = self.shutdown_receiver.changed() => return Ok(()),
+                req = self.recv_cmd.recv() => if let Ok(req) = req {
+                    match req {
+                        TCmd::SetDay(val) => self.thermostazv.day = val,
+                        TCmd::SetNight(val) => self.thermostazv.night = val,
+                        TCmd::SetEmpty(val) => self.thermostazv.empty = val,
+                        TCmd::SetMorning(val) => self.thermostazv.morning = val,
+                        TCmd::SetEvening(val) => self.thermostazv.evening = val,
+                        TCmd::SetPresent(val) => self.thermostazv.present = val,
+                        TCmd::SetHot(val) => self.thermostazv.hot = val,
+                        TCmd::Current(val) => {
+                            if self.thermostazv.update(val) {
+                                self.to_uart_send
+                                    .send(Cmd::Set(Relay::from(self.thermostazv.hot)))
+                                    .await?;
+                            }
+                        }
                     }
+                    self.thermostazv.save()?;
+                    self.pub_state.send_if_modified(|old: &mut Thermostazv| {
+                        if self.thermostazv == *old {
+                            false
+                        } else {
+                            *old = self.thermostazv.clone();
+                            true
+                        }
+                    });
                 }
             }
-            self.thermostazv.save()?;
-            self.pub_state.send_if_modified(|old: &mut Thermostazv| {
-                if self.thermostazv == *old {
-                    false
-                } else {
-                    *old = self.thermostazv.clone();
-                    true
-                }
-            });
         }
-        Ok(())
     }
 }

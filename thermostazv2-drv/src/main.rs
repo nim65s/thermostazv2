@@ -1,12 +1,14 @@
 use anyhow::Context;
 use async_channel::unbounded;
 use clap::Parser;
+use futures::future::try_join_all;
 use futures::stream::StreamExt;
-use rumqttc::{AsyncClient, Event, LastWill, MqttOptions, Packet, QoS};
+use rumqttc::{AsyncClient, LastWill, MqttOptions, QoS};
 use std::str::FromStr;
 use std::time::Duration;
 use thermostazv2_lib::{Cmd, Relay, SensorErr, SensorResult};
 use tokio::task;
+use tokio::time::sleep;
 use tokio_serial::SerialPortBuilderExt;
 use tokio_util::codec::Decoder;
 use tracing::Level;
@@ -18,8 +20,10 @@ mod tasks;
 mod thermostazv;
 use crate::err::ThermostazvResult;
 use crate::sercon::SerialConnection;
-use crate::status::manager;
-use crate::tasks::{influx, mqtt_publish, mqtt_receive, serial_reader, serial_writer};
+use crate::status::smanager;
+use crate::tasks::{
+    influx, main_task, mqtt_connection, mqtt_publish, mqtt_receive, serial_reader, serial_writer,
+};
 use crate::thermostazv::{TManager, Thermostazv};
 
 #[derive(Parser, Debug)]
@@ -59,6 +63,7 @@ struct Args {
     log_level: String,
 }
 
+#[allow(clippy::too_many_lines)]
 #[tokio::main]
 async fn main() -> ThermostazvResult {
     let args = Args::parse();
@@ -67,6 +72,8 @@ async fn main() -> ThermostazvResult {
         .with_max_level(Level::from_str(&args.log_level)?)
         .finish();
     tracing::subscriber::set_global_default(subscriber)?;
+
+    let (shutdown_sender, shutdown_receiver) = tokio::sync::watch::channel(false);
 
     let thermostazv = Thermostazv::new()?;
     let (thermostazv_cmd_send, thermostazv_cmd_receive) = async_channel::unbounded();
@@ -98,24 +105,38 @@ async fn main() -> ThermostazvResult {
     mqttoptions.set_last_will(lwt);
     mqttoptions.set_credentials(args.mqtt_user, args.mqtt_pass);
 
-    let (client, mut connection) = AsyncClient::new(mqttoptions, 10);
+    let (client, connection) = AsyncClient::new(mqttoptions, 10);
 
-    task::spawn(async move { serial_writer(to_uart_receive, uart_writer).await });
-    task::spawn(async move {
-        serial_reader(uart_reader, to_uart_send, status_cmd_send, to_mqtt_send).await
-    });
+    let mut tasks = Vec::new();
+
+    tasks.push(task::spawn(async move {
+        serial_writer(to_uart_receive, uart_writer, shutdown_receiver).await
+    }));
+    let shutdown_receiver = shutdown_sender.subscribe();
+    tasks.push(task::spawn(async move {
+        serial_reader(
+            uart_reader,
+            to_uart_send,
+            status_cmd_send,
+            to_mqtt_send,
+            shutdown_receiver,
+        )
+        .await
+    }));
 
     // mqtt receiver task
-    task::spawn(async move {
+    let shutdown_receiver = shutdown_sender.subscribe();
+    tasks.push(task::spawn(async move {
         mqtt_receive(
             to_uart_send2,
             from_mqtt_receive,
             thermostazv_cmd_send,
             status_watch_receive,
             to_mqtt_send2,
+            shutdown_receiver,
         )
         .await
-    });
+    }));
 
     client
         .subscribe("/azv/thermostazv/cmd", QoS::AtMostOnce)
@@ -131,39 +152,55 @@ async fn main() -> ThermostazvResult {
         .await?;
 
     // mqtt publisher task
-    task::spawn(
-        async move { mqtt_publish(to_mqtt_receive, thermostazv_watch_receive, client).await },
-    );
+    let shutdown_receiver = shutdown_sender.subscribe();
+    tasks.push(task::spawn(async move {
+        mqtt_publish(
+            to_mqtt_receive,
+            thermostazv_watch_receive,
+            client,
+            shutdown_receiver,
+        )
+        .await
+    }));
 
     let client = influxdb2::Client::new(args.infl_url, args.infl_org, args.infl_token);
     let thermostazv_watch_receive = thermostazv_watch_send.subscribe();
     let status_watch_receive = status_watch_send.subscribe();
-    task::spawn(async move {
+    let shutdown_receiver = shutdown_sender.subscribe();
+    tasks.push(task::spawn(async move {
         influx(
             client,
             thermostazv_watch_receive,
             status_watch_receive,
             &args.infl_buck,
+            shutdown_receiver,
         )
         .await
-    });
+    }));
 
+    let shutdown_receiver = shutdown_sender.subscribe();
     let mut tmanager = TManager::new(
         thermostazv,
         thermostazv_cmd_receive,
         thermostazv_watch_send,
         to_uart_send3,
+        shutdown_receiver,
     );
-    task::spawn(async move { tmanager.manage().await });
+    tasks.push(task::spawn(async move { tmanager.manage().await }));
+    let shutdown_receiver = shutdown_sender.subscribe();
+    tasks.push(task::spawn(async move {
+        smanager(status_cmd_receive, status_watch_send, shutdown_receiver).await
+    }));
+    let shutdown_receiver = shutdown_sender.subscribe();
+    tasks.push(task::spawn(async move {
+        mqtt_connection(connection, from_mqtt_send, shutdown_receiver).await
+    }));
 
-    task::spawn(async move { manager(status_cmd_receive, status_watch_send).await });
+    let shutdown_receiver = shutdown_sender.subscribe();
+    main_task(&tasks, shutdown_receiver, shutdown_sender).await;
 
-    // mqtt publish (main) task
-    loop {
-        match connection.poll().await {
-            Ok(Event::Incoming(Packet::Publish(p))) => from_mqtt_send.send(p).await?,
-            Err(n) => tracing::error!("incoming mqtt packet Err:  {:?}", n),
-            Ok(_) => {}
-        }
-    }
+    sleep(Duration::from_secs(3)).await;
+    try_join_all(tasks).await?;
+
+    Ok(())
 }
