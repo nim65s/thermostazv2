@@ -49,11 +49,11 @@ pub async fn serial_reader(
 }
 
 pub async fn mqtt_receive(
-    to_uart_clone: Sender<Cmd>,
+    to_uart_send: Sender<Cmd>,
     from_mqtt_receive: Receiver<Publish>,
     set_thermostazv: TCmdSender,
     get_status: SWatchReceiver,
-    to_mqtt_clone: Sender<Cmd>,
+    to_mqtt_send: Sender<Cmd>,
 ) -> ThermostazvResult {
     while let Ok(msg) = from_mqtt_receive.recv().await {
         tracing::info!("mqtt received {:?}", msg);
@@ -61,14 +61,14 @@ pub async fn mqtt_receive(
         let cmd = msg.payload;
         if topic == "/azv/thermostazv/cmd" {
             if cmd == "c" {
-                to_uart_clone.send(Cmd::Set(Relay::Hot)).await?;
+                to_uart_send.send(Cmd::Set(Relay::Hot)).await?;
             } else if cmd == "f" {
-                to_uart_clone.send(Cmd::Set(Relay::Cold)).await?;
+                to_uart_send.send(Cmd::Set(Relay::Cold)).await?;
             } else if cmd == "s" {
                 let status = *get_status.borrow();
-                to_mqtt_clone.send(status).await?;
+                to_mqtt_send.send(status).await?;
             } else if cmd == "p" {
-                to_uart_clone.send(Cmd::Ping).await?;
+                to_uart_send.send(Cmd::Ping).await?;
             }
         } else if topic == "/azv/thermostazv/presence" {
             set_thermostazv

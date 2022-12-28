@@ -20,7 +20,7 @@ use crate::err::ThermostazvResult;
 use crate::sercon::SerialConnection;
 use crate::status::manager;
 use crate::tasks::{influx, mqtt_publish, mqtt_receive, serial_reader, serial_writer};
-use crate::thermostazv::Thermostazv;
+use crate::thermostazv::{TManager, Thermostazv};
 
 #[derive(Parser, Debug)]
 #[command(author, version, about, long_about = None)]
@@ -68,7 +68,7 @@ async fn main() -> ThermostazvResult {
         .finish();
     tracing::subscriber::set_global_default(subscriber)?;
 
-    let mut thermostazv = Thermostazv::new()?;
+    let thermostazv = Thermostazv::new()?;
     let (thermostazv_cmd_send, thermostazv_cmd_receive) = async_channel::unbounded();
     let (thermostazv_watch_send, thermostazv_watch_receive) =
         tokio::sync::watch::channel(thermostazv.clone());
@@ -87,8 +87,9 @@ async fn main() -> ThermostazvResult {
     let (to_uart_send, to_uart_receive) = unbounded();
     let (to_mqtt_send, to_mqtt_receive) = unbounded();
     let (from_mqtt_send, from_mqtt_receive) = unbounded();
-    let to_uart_clone = to_uart_send.clone();
-    let to_mqtt_clone = to_mqtt_send.clone();
+    let to_uart_send2 = to_uart_send.clone();
+    let to_uart_send3 = to_uart_send.clone();
+    let to_mqtt_send2 = to_mqtt_send.clone();
 
     let lwt = LastWill::new("/azv/thermostazv/lwt", "Offline", QoS::AtLeastOnce, false);
 
@@ -107,11 +108,11 @@ async fn main() -> ThermostazvResult {
     // mqtt receiver task
     task::spawn(async move {
         mqtt_receive(
-            to_uart_clone,
+            to_uart_send2,
             from_mqtt_receive,
             thermostazv_cmd_send,
             status_watch_receive,
-            to_mqtt_clone,
+            to_mqtt_send2,
         )
         .await
     });
@@ -147,11 +148,13 @@ async fn main() -> ThermostazvResult {
         .await
     });
 
-    task::spawn(async move {
-        thermostazv
-            .manager(thermostazv_cmd_receive, thermostazv_watch_send)
-            .await
-    });
+    let mut tmanager = TManager::new(
+        thermostazv,
+        thermostazv_cmd_receive,
+        thermostazv_watch_send,
+        to_uart_send3,
+    );
+    task::spawn(async move { tmanager.manage().await });
 
     task::spawn(async move { manager(status_cmd_receive, status_watch_send).await });
 

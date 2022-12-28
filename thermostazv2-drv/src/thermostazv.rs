@@ -1,9 +1,10 @@
+use crate::err::{ThermostazvError, ThermostazvResult};
+use async_channel::Sender;
 use chrono::{Local, Timelike};
-
-use crate::err::ThermostazvError;
 use serde::{Deserialize, Serialize};
 use std::fs;
 use std::path::Path;
+use thermostazv2_lib::{Cmd, Relay};
 
 #[derive(Serialize, Deserialize, Debug)]
 pub enum TCmd {
@@ -69,15 +70,7 @@ impl Thermostazv {
         })
     }
 
-    pub fn save(&self, pub_state: &TWatchSender) -> Result<(), ThermostazvError> {
-        pub_state.send_if_modified(|old: &mut Self| {
-            if self == old {
-                false
-            } else {
-                *old = self.clone();
-                true
-            }
-        });
+    pub fn save(&self) -> ThermostazvResult {
         let toml = toml::to_string(&self)?;
         fs::write(config_path().join("config.toml"), toml)?;
         Ok(())
@@ -100,30 +93,71 @@ impl Thermostazv {
         self.target() + if self.hot { 0.5 } else { -0.5 }
     }
 
-    pub fn update(&mut self, current: f64) {
+    pub fn update(&mut self, current: f64) -> bool {
         let h = self.hysteresis();
-        self.hot = current <= h;
-        tracing::info!("temperature: {} / {} => chauffe: {}", current, h, self.hot);
-        // TODO: if self.hot changed, notify serial and mqtt
+        if self.hot == (current <= h) {
+            false
+        } else {
+            self.hot = current <= h;
+            tracing::info!("temperature: {} / {} => chauffe: {}", current, h, self.hot);
+            true
+        }
     }
+}
 
-    pub async fn manager(
-        &mut self,
+pub struct TManager {
+    thermostazv: Thermostazv,
+    recv_cmd: TCmdReceiver,
+    pub_state: TWatchSender,
+    to_uart_send: Sender<Cmd>,
+}
+
+impl TManager {
+    pub fn new(
+        thermostazv: Thermostazv,
         recv_cmd: TCmdReceiver,
         pub_state: TWatchSender,
-    ) -> Result<(), ThermostazvError> {
-        while let Ok(req) = recv_cmd.recv().await {
+        to_uart_send: Sender<Cmd>,
+    ) -> Self {
+        Self {
+            thermostazv,
+            recv_cmd,
+            pub_state,
+            to_uart_send,
+        }
+    }
+
+    pub async fn manage(&mut self) -> ThermostazvResult {
+        while let Ok(req) = self.recv_cmd.recv().await {
             match req {
-                TCmd::SetDay(val) => self.day = val,
-                TCmd::SetNight(val) => self.night = val,
-                TCmd::SetEmpty(val) => self.empty = val,
-                TCmd::SetMorning(val) => self.morning = val,
-                TCmd::SetEvening(val) => self.evening = val,
-                TCmd::SetPresent(val) => self.present = val,
-                TCmd::SetHot(val) => self.hot = val,
-                TCmd::Current(val) => self.update(val),
+                TCmd::SetDay(val) => self.thermostazv.day = val,
+                TCmd::SetNight(val) => self.thermostazv.night = val,
+                TCmd::SetEmpty(val) => self.thermostazv.empty = val,
+                TCmd::SetMorning(val) => self.thermostazv.morning = val,
+                TCmd::SetEvening(val) => self.thermostazv.evening = val,
+                TCmd::SetPresent(val) => self.thermostazv.present = val,
+                TCmd::SetHot(val) => self.thermostazv.hot = val,
+                TCmd::Current(val) => {
+                    if self.thermostazv.update(val) {
+                        self.to_uart_send
+                            .send(Cmd::Set(if self.thermostazv.hot {
+                                Relay::Hot
+                            } else {
+                                Relay::Cold
+                            }))
+                            .await?;
+                    }
+                }
             }
-            self.save(&pub_state)?;
+            self.thermostazv.save()?;
+            self.pub_state.send_if_modified(|old: &mut Thermostazv| {
+                if self.thermostazv == *old {
+                    false
+                } else {
+                    *old = self.thermostazv.clone();
+                    true
+                }
+            });
         }
         Ok(())
     }
