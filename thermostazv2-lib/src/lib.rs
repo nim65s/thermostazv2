@@ -41,6 +41,16 @@ pub enum Relay {
     Cold,
 }
 
+impl From<bool> for Relay {
+    fn from(val: bool) -> Self {
+        if val {
+            Self::Hot
+        } else {
+            Self::Cold
+        }
+    }
+}
+
 #[derive(Encode, Decode, Debug, Eq, PartialEq, Copy, Clone)]
 pub enum Cmd {
     Get,

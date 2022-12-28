@@ -140,11 +140,7 @@ impl TManager {
                 TCmd::Current(val) => {
                     if self.thermostazv.update(val) {
                         self.to_uart_send
-                            .send(Cmd::Set(if self.thermostazv.hot {
-                                Relay::Hot
-                            } else {
-                                Relay::Cold
-                            }))
+                            .send(Cmd::Set(Relay::from(self.thermostazv.hot)))
                             .await?;
                     }
                 }

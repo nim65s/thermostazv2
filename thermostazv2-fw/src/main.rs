@@ -379,14 +379,7 @@ mod app {
         let sensor = cx.shared.sensor;
         let relay = cx.shared.relay;
         (sensor, relay).lock(|sensor, relay| {
-            let cmd = Cmd::Status(
-                if relay.is_set_high() {
-                    Relay::Hot
-                } else {
-                    Relay::Cold
-                },
-                *sensor,
-            );
+            let cmd = Cmd::Status(Relay::from(relay.is_set_high()), *sensor);
             #[allow(clippy::unwrap_used)]
             send::spawn(cmd).unwrap();
         });
