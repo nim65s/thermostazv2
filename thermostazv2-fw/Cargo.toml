@@ -2,14 +2,17 @@
 name = "thermostazv2-fw"
 version = "0.1.0"
 edition = "2021"
-
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
+aht20 = { git = "https://github.com/nim65s/aht20" }
 bincode = { version = "2.0.0-rc", default-features = false, features = ["derive"] }
-cortex-m = { version = "0.7.6", features = ["critical-section-single-core"] }
-cortex-m-rt = { version = "0.7.1", features = ["device"] }
+bitflags = "1.3.2"
+cortex-m = { version = "0.7.7", features = ["critical-section-single-core"] }
+cortex-m-rt = { version = "0.7.2", features = ["device"] }
 cortex-m-rtic = "1.1.3"
+crc = "3.0.0"
+embedded-hal = "0.2.7"
 panic-rtt-target = { version = "0.1.2", features = ["cortex-m"] }
 rtic-monotonic = "1.0.0"
 rtt-target = { version = "0.3.1", features = ["cortex-m"] }
@@ -17,10 +20,6 @@ stm32-usbd = "0.6.0"
 stm32f1 = { version = "0.15.1", features = ["stm32f103"] }
 stm32f1xx-hal = { version = "0.9.0", features = ["rtic", "stm32f103", "rt", "stm32-usbd"] }
 systick-monotonic = "1.0.0"
+thermostazv2-lib = { path = "../thermostazv2-lib" }
 usb-device = { version = "0.2.9" }
 usbd-serial = "0.1.1"
-thermostazv2-lib = { path = "../thermostazv2-lib" }
-embedded-hal = "0.2.7"
-bitflags = "1.3.2"
-crc = "3.0.0"
-aht20 = { git = "https://github.com/nim65s/aht20" }

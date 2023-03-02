@@ -1,25 +1,40 @@
-default_job = "clippy-native"
+default_job = "clippy-fw"
 
 [jobs]
 
-[jobs.check-native]
-command = ["cargo", "check", "--color", "always", "-p", "thermostazv2-drv", "-p", "thermostazv2-lib"]
+[jobs.test]
+command = ["just", "test"]
 need_stdout = false
 
-[jobs.check-arm]
-command = ["cargo", "check", "--color", "always", "-p", "thermostazv2-fw", "--target", "thumbv7m-none-eabi"]
+[jobs.check-drv]
+command = ["just", "check-drv"]
 need_stdout = false
 
-[jobs.clippy-native]
-command = ["cargo", "clippy", "--color", "always", "-p", "thermostazv2-drv", "-p", "thermostazv2-lib", "--", "-W", "clippy::pedantic", "-W", "clippy::nursery", "-W", "clippy::unwrap_used", "-W", "clippy::expect_used"]
+[jobs.check-fw]
+command = ["just", "check-fw"]
 need_stdout = false
 
-[jobs.clippy-arm]
-command = ["cargo", "clippy", "--color", "always", "-p", "thermostazv2-fw", "--target", "thumbv7m-none-eabi", "--", "-W", "clippy::pedantic", "-W", "clippy::nursery", "-W", "clippy::unwrap_used", "-W", "clippy::expect_used"]
+[jobs.check-lib]
+command = ["just", "check-lib"]
+need_stdout = false
+
+[jobs.clippy-drv]
+command = ["just", "clippy-drv"]
+need_stdout = false
+
+[jobs.clippy-fw]
+command = ["just", "clippy-fw"]
+need_stdout = false
+
+[jobs.clippy-lib]
+command = ["just", "clippy-lib"]
 need_stdout = false
 
 [keybindings]
-a = "job:check-native"
-u = "job:check-arm"
-i = "job:clippy-native"
-e = "job:clippy-arm"
+t = "job:check-drv"
+s = "job:check-fw"
+r = "job:check-lib"
+n = "job:test"
+shift-t = "job:clippy-drv"
+shift-s = "job:clippy-fw"
+shift-r = "job:clippy-lib"
