@@ -27,12 +27,10 @@ mod app {
 
     #[shared]
     struct Shared {
-        usb_dev: UsbDevice<'static, UsbBusType>,
-        serial: usbd_serial::SerialPort<'static, UsbBusType>,
         aht20: Aht20NoDelay<I2c>,
         relay: PB8<Output<PushPull>>,
         sensor: SensorResult,
-        data: TVec,
+        serial: usbd_serial::SerialPort<'static, UsbBusType>,
     }
 
     #[local]
@@ -40,6 +38,8 @@ mod app {
         led: PC13<Output<PushPull>>,
         state: bool,
         iwdg: IndependentWatchdog,
+        data: TVec,
+        usb_dev: UsbDevice<'static, UsbBusType>,
     }
 
     #[monotonic(binds = SysTick, default = true)]
@@ -151,53 +151,29 @@ mod app {
 
         (
             Shared {
-                usb_dev,
-                serial,
                 aht20,
                 relay,
                 sensor,
-                data: TVec::new(),
+                serial,
             },
             Local {
                 led,
                 state: false,
                 iwdg,
+                data: TVec::new(),
+                usb_dev,
             },
             init::Monotonics(mono),
         )
     }
 
-    #[task(capacity = 3, shared = [data])]
-    fn decode(cx: decode::Context) {
-        let mut data = cx.shared.data;
-        data.lock(|data| {
-            Cmd::from_vec(data).map_or_else(
-                |_| {
-                    rprintln!("Couldn't decode {:?}", data);
-                },
-                |cmd| {
-                    rprintln!("received {:?}", cmd);
-
-                    #[allow(clippy::unwrap_used)]
-                    match cmd {
-                        Cmd::Get => send_status::spawn().unwrap(),
-                        Cmd::Set(r) => set_relay::spawn(r).unwrap(),
-                        Cmd::Ping => send::spawn(Cmd::Pong).unwrap(),
-                        Cmd::Status(_, _) => rprintln!("wrong cmd received: {:?}", cmd),
-                        Cmd::Pong => rprintln!("pong"),
-                    }
-                },
-            );
-        });
-    }
-
-    #[task(binds = USB_HP_CAN_TX, shared = [usb_dev, serial, data])]
-    fn usb_tx(cx: usb_tx::Context) {
-        let mut usb_dev = cx.shared.usb_dev;
+    #[task(capacity = 3, local = [data, usb_dev], shared = [serial])]
+    fn recv(cx: recv::Context) {
         let mut serial = cx.shared.serial;
-        let mut data = cx.shared.data;
+        let usb_dev = cx.local.usb_dev;
+        let data = cx.local.data;
 
-        (&mut usb_dev, &mut serial, &mut data).lock(|usb_dev, serial, data| {
+        serial.lock(|serial| {
             if !usb_dev.poll(&mut [serial]) {
                 return;
             }
@@ -205,33 +181,46 @@ mod app {
             let mut buf = [0u8; 1];
 
             while serial.read(&mut buf).is_ok() {
-                data.push(buf[0]);
+                #[allow(clippy::unwrap_used)]
+                data.push(buf[0]).unwrap();
                 if buf[0] == 0 {
-                    #[allow(clippy::unwrap_used)]
-                    decode::spawn().unwrap();
+                    Cmd::from_vec(data).map_or_else(
+                        |_| {
+                            rprintln!("Couldn't decode {:?}", data);
+                        },
+                        |cmd| {
+                            rprintln!("received {:?}", cmd);
+
+                            #[allow(clippy::unwrap_used)]
+                            match cmd {
+                                Cmd::Get => send_status::spawn().unwrap(),
+                                Cmd::Set(r) => set_relay::spawn(r).unwrap(),
+                                Cmd::Ping => send::spawn(Cmd::Pong).unwrap(),
+                                Cmd::Status(_, _) => rprintln!("wrong cmd received: {:?}", cmd),
+                                Cmd::Pong => rprintln!("pong"),
+                            }
+                        },
+                    );
+                    data.clear();
+                }
+                if data.is_full() {
+                    rprintln!("data is full: {:?}", data);
+                    data.clear();
                 }
             }
         });
     }
 
-    #[task(binds = USB_LP_CAN_RX0, shared = [usb_dev, serial, data])]
-    fn usb_rx0(cx: usb_rx0::Context) {
-        let mut usb_dev = cx.shared.usb_dev;
-        let mut serial = cx.shared.serial;
-        let mut data = cx.shared.data;
+    #[task(binds = USB_HP_CAN_TX)]
+    fn usb_tx(_cx: usb_tx::Context) {
+        #[allow(clippy::unwrap_used)]
+        recv::spawn().unwrap();
+    }
 
-        (&mut usb_dev, &mut serial, &mut data).lock(|usb_dev, serial, data| {
-            if !usb_dev.poll(&mut [serial]) {
-                return;
-            }
-            let mut buf = [0u8; 1];
-
-            while serial.read(&mut buf).is_ok() {
-                data.push(buf[0]);
-                #[allow(clippy::unwrap_used)]
-                decode::spawn().unwrap();
-            }
-        });
+    #[task(binds = USB_LP_CAN_RX0)]
+    fn usb_rx0(_cx: usb_rx0::Context) {
+        #[allow(clippy::unwrap_used)]
+        recv::spawn().unwrap();
     }
 
     #[task(local = [led, state, iwdg])]
@@ -352,8 +341,11 @@ mod app {
     fn send(cx: send::Context, cmd: Cmd) {
         rprintln!("send {:?}", cmd);
         let mut serial = cx.shared.serial;
-        serial.lock(|serial| {
-            serial.write(cmd.to_vec().unwrap().as_slice());
-        });
+        cmd.to_vec().map_or_else(
+            |e| rprintln!("{:?} to_vec err: {}", cmd, e),
+            |vec| {
+                serial.lock(|serial| serial.write(vec.as_slice()).ok());
+            },
+        );
     }
 }
