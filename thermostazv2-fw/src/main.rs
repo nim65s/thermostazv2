@@ -1,6 +1,6 @@
 //! CDC-ACM serial port example using cortex-m-rtic.
 //! Target board: Blue Pill
-//! with bincode & rtt
+//! with rtt
 #![no_main]
 #![no_std]
 #![allow(non_snake_case)]
@@ -10,8 +10,6 @@ use panic_rtt_target as _;
 #[rtic::app(device = stm32f1xx_hal::pac, peripherals = true, dispatchers = [SPI1, SPI2, SPI3, ADC1_2, ADC3, CAN_RX1, CAN_SCE])]
 mod app {
     use aht20::{Aht20NoDelay, Error};
-    use bincode::{decode_from_slice, encode_into_slice};
-    use core::cmp::Ordering;
     use cortex_m::asm::delay;
     use rtt_target::{rprintln, rtt_init_print};
     use stm32f1xx_hal::gpio::PinState;
@@ -22,7 +20,7 @@ mod app {
     use stm32f1xx_hal::usb::{Peripheral, UsbBus, UsbBusType};
     use stm32f1xx_hal::watchdog::IndependentWatchdog;
     use systick_monotonic::{fugit::Duration, Systick};
-    use thermostazv2_lib::{Cmd, Relay, SensorErr, SensorOk, SensorResult, HEADER};
+    use thermostazv2_lib::{Cmd, Relay, SensorErr, SensorOk, SensorResult, TVec};
     use usb_device::prelude::*;
 
     type I2c = BlockingI2c<I2C1, (PB6<Alternate<OpenDrain>>, PB7<Alternate<OpenDrain>>)>;
@@ -34,16 +32,13 @@ mod app {
         aht20: Aht20NoDelay<I2c>,
         relay: PB8<Output<PushPull>>,
         sensor: SensorResult,
+        data: TVec,
     }
 
     #[local]
     struct Local {
         led: PC13<Output<PushPull>>,
         state: bool,
-        header_index: usize,
-        buffer: [u8; 32],
-        buffer_index: usize,
-        buffer_size: usize,
         iwdg: IndependentWatchdog,
     }
 
@@ -161,112 +156,80 @@ mod app {
                 aht20,
                 relay,
                 sensor,
+                data: TVec::new(),
             },
             Local {
                 led,
                 state: false,
-                header_index: 0,
-                buffer: [0; 32],
-                buffer_index: 0,
-                buffer_size: 0,
                 iwdg,
             },
             init::Monotonics(mono),
         )
     }
 
-    #[task(capacity = 3, local = [header_index, buffer, buffer_index, buffer_size])]
-    fn decode(cx: decode::Context, buf: [u8; 32], count: usize) {
-        let header_index = cx.local.header_index;
-        let buffer = cx.local.buffer;
-        let buffer_index = cx.local.buffer_index;
-        let buffer_size = cx.local.buffer_size;
+    #[task(capacity = 3, shared = [data])]
+    fn decode(cx: decode::Context) {
+        let mut data = cx.shared.data;
+        data.lock(|data| {
+            Cmd::from_vec(data).map_or_else(
+                |_| {
+                    rprintln!("Couldn't decode {:?}", data);
+                },
+                |cmd| {
+                    rprintln!("received {:?}", cmd);
 
-        for &byte in &buf[..count] {
-            match (*header_index).cmp(&HEADER.len()) {
-                Ordering::Less => {
-                    if byte == HEADER[*header_index] {
-                        *header_index += 1;
-                    } else {
-                        rprintln!("wrong header {}: {}", *header_index, byte);
-                        *header_index = 0;
-                        *buffer_index = 0;
-                        *buffer_size = 0;
+                    #[allow(clippy::unwrap_used)]
+                    match cmd {
+                        Cmd::Get => send_status::spawn().unwrap(),
+                        Cmd::Set(r) => set_relay::spawn(r).unwrap(),
+                        Cmd::Ping => send::spawn(Cmd::Pong).unwrap(),
+                        Cmd::Status(_, _) => rprintln!("wrong cmd received: {:?}", cmd),
+                        Cmd::Pong => rprintln!("pong"),
                     }
-                }
-                Ordering::Equal => {
-                    *buffer_index = 0;
-                    *header_index += 1;
-                    *buffer_size = byte.into();
-                }
-                Ordering::Greater => {
-                    buffer[*buffer_index] = byte;
-                    *buffer_index += 1;
-                    if *buffer_index == *buffer_size {
-                        let conf = bincode::config::standard();
-                        if let Ok((cmd, _)) = decode_from_slice::<Cmd, bincode::config::Configuration>(
-                            &buffer[..*buffer_size],
-                            conf,
-                        ) {
-                            //rprintln!("decode {} / {}: {:?}", size, count, cmd);
-                            rprintln!("received {:?}", cmd);
-                            #[allow(clippy::unwrap_used)]
-                            match cmd {
-                                Cmd::Get => send_status::spawn().unwrap(),
-                                Cmd::Set(r) => set_relay::spawn(r).unwrap(),
-                                Cmd::Ping => send::spawn(Cmd::Pong).unwrap(),
-                                Cmd::Status(_, _) => rprintln!("wrong cmd received: {:?}", cmd),
-                                Cmd::Pong => rprintln!("pong"),
-                            }
-                        } else {
-                            rprintln!("Couldn't decode {:?}", &buffer[..*buffer_size]);
-                        }
-                        *header_index = 0;
-                        *buffer_index = 0;
-                        *buffer_size = 0;
-                    }
-                }
-            }
-        }
+                },
+            );
+        });
     }
 
-    #[task(binds = USB_HP_CAN_TX, shared = [usb_dev, serial])]
+    #[task(binds = USB_HP_CAN_TX, shared = [usb_dev, serial, data])]
     fn usb_tx(cx: usb_tx::Context) {
         let mut usb_dev = cx.shared.usb_dev;
         let mut serial = cx.shared.serial;
+        let mut data = cx.shared.data;
 
-        (&mut usb_dev, &mut serial).lock(|usb_dev, serial| {
+        (&mut usb_dev, &mut serial, &mut data).lock(|usb_dev, serial, data| {
             if !usb_dev.poll(&mut [serial]) {
                 return;
             }
 
-            let mut buf = [0u8; 32];
+            let mut buf = [0u8; 1];
 
-            if let Ok(count) = serial.read(&mut buf) {
-                if count > 0 {
+            while serial.read(&mut buf).is_ok() {
+                data.push(buf[0]);
+                if buf[0] == 0 {
                     #[allow(clippy::unwrap_used)]
-                    decode::spawn(buf, count).unwrap();
+                    decode::spawn().unwrap();
                 }
             }
         });
     }
 
-    #[task(binds = USB_LP_CAN_RX0, shared = [usb_dev, serial])]
+    #[task(binds = USB_LP_CAN_RX0, shared = [usb_dev, serial, data])]
     fn usb_rx0(cx: usb_rx0::Context) {
         let mut usb_dev = cx.shared.usb_dev;
         let mut serial = cx.shared.serial;
+        let mut data = cx.shared.data;
 
-        (&mut usb_dev, &mut serial).lock(|usb_dev, serial| {
+        (&mut usb_dev, &mut serial, &mut data).lock(|usb_dev, serial, data| {
             if !usb_dev.poll(&mut [serial]) {
                 return;
             }
-            let mut buf = [0u8; 32];
+            let mut buf = [0u8; 1];
 
-            if let Ok(count) = serial.read(&mut buf) {
-                if count > 0 {
-                    #[allow(clippy::unwrap_used)]
-                    decode::spawn(buf, count).unwrap();
-                }
+            while serial.read(&mut buf).is_ok() {
+                data.push(buf[0]);
+                #[allow(clippy::unwrap_used)]
+                decode::spawn().unwrap();
             }
         });
     }
@@ -389,16 +352,8 @@ mod app {
     fn send(cx: send::Context, cmd: Cmd) {
         rprintln!("send {:?}", cmd);
         let mut serial = cx.shared.serial;
-        let conf = bincode::config::standard();
-        let mut buf = [0u8; 32];
         serial.lock(|serial| {
-            if let Ok(size) = encode_into_slice(cmd, &mut buf, conf) {
-                if let Ok(size_u8) = size.try_into() {
-                    serial.write(&HEADER).ok();
-                    serial.write(&[size_u8]).ok();
-                    serial.write(&buf[0..size]).ok();
-                }
-            }
+            serial.write(cmd.to_vec().unwrap().as_slice());
         });
     }
 }

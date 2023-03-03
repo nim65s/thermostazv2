@@ -2236,7 +2236,6 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "async-channel",
- "bincode",
  "bytes",
  "chrono",
  "clap",

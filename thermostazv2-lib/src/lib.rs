@@ -76,8 +76,10 @@ pub enum Cmd {
     Status(Relay, SensorResult),
 }
 
+pub type TVec = Vec<u8, { Cmd::POSTCARD_MAX_SIZE + 2 }>;
+
 impl Cmd {
-    pub fn to_vec(&self) -> Result<Vec<u8, { Self::POSTCARD_MAX_SIZE + 2 }>, TError> {
+    pub fn to_vec(&self) -> Result<TVec, TError> {
         postcard::to_vec_cobs(&self).map_err(TError::Postcard)
     }
 
