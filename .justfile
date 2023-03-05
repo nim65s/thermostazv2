@@ -32,3 +32,5 @@ test:
 
 embed:
     {{embed}}
+
+all: clippy-lib clippy-drv clippy-fw test
