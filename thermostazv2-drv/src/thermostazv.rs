@@ -16,12 +16,15 @@ impl Thermostazv {
 
     fn target(&self) -> f64 {
         if self.present {
+            /*
             let now = Local::now();
             if 6 <= now.hour() && now.hour() < 23 {
                 17.5
             } else {
                 17.0
             }
+            */
+            17.5
         } else {
             10.0
         }
