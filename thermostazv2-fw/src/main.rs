@@ -16,10 +16,11 @@ mod app {
     use stm32f1xx_hal::gpio::{Alternate, OpenDrain, Output, PushPull, PB6, PB7, PB8, PC13};
     use stm32f1xx_hal::i2c::{BlockingI2c, DutyCycle, Mode};
     use stm32f1xx_hal::pac::I2C1;
+    use stm32f1xx_hal::pac::TIM2;
     use stm32f1xx_hal::prelude::*;
+    use stm32f1xx_hal::timer::MonoTimerUs;
     use stm32f1xx_hal::usb::{Peripheral, UsbBus, UsbBusType};
     use stm32f1xx_hal::watchdog::IndependentWatchdog;
-    use systick_monotonic::{fugit::Duration, Systick};
     use thermostazv2_lib::{Cmd, Relay, SensorErr, SensorOk, SensorResult, TVec};
     use usb_device::prelude::*;
 
@@ -42,8 +43,8 @@ mod app {
         usb_dev: UsbDevice<'static, UsbBusType>,
     }
 
-    #[monotonic(binds = SysTick, default = true)]
-    type MonoTimer = Systick<1000>;
+    #[monotonic(binds = TIM2, default = true)]
+    type MyMono = MonoTimerUs<TIM2>;
 
     #[init]
     fn init(cx: init::Context) -> (Shared, Local, init::Monotonics) {
@@ -53,7 +54,6 @@ mod app {
 
         let mut flash = cx.device.FLASH.constrain();
         let rcc = cx.device.RCC.constrain();
-        let mono = Systick::new(cx.core.SYST, 36_000_000);
 
         let clocks = rcc
             .cfgr
@@ -63,6 +63,7 @@ mod app {
             .freeze(&mut flash.acr);
 
         assert!(clocks.usbclk_valid());
+        let mono = cx.device.TIM2.monotonic_us(&clocks);
 
         let mut gpioa = cx.device.GPIOA.split();
         let mut gpiob = cx.device.GPIOB.split();
@@ -132,9 +133,9 @@ mod app {
             .pc13
             .into_push_pull_output_with_state(&mut gpioc.crh, PinState::Low);
         #[allow(clippy::unwrap_used)]
-        blink::spawn_after(Duration::<u64, 1, 1000>::secs(1)).unwrap();
+        blink::spawn_after(1.secs()).unwrap();
         #[allow(clippy::unwrap_used)]
-        wait_calibrate::spawn_after(Duration::<u64, 1, 1000>::millis(20)).unwrap();
+        wait_calibrate::spawn_after(20.millis()).unwrap();
         rprintln!("init end");
 
         gpiob
@@ -147,7 +148,7 @@ mod app {
         let sensor = SensorResult::Err(SensorErr::Uninitialized);
 
         let mut iwdg = IndependentWatchdog::new(cx.device.IWDG);
-        iwdg.start(Duration::<u32, 1, 1000>::secs(3));
+        iwdg.start(3.secs());
 
         (
             Shared {
@@ -235,7 +236,7 @@ mod app {
         }
 
         #[allow(clippy::unwrap_used)]
-        blink::spawn_after(Duration::<u64, 1, 1000>::secs(1)).unwrap();
+        blink::spawn_after(1.secs()).unwrap();
         //start_read::spawn().unwrap();
     }
 
@@ -256,7 +257,7 @@ mod app {
             Err(e) => rprintln!("NOT CALIBRATED: {:?}", e),
         });
         #[allow(clippy::unwrap_used)]
-        start_read::spawn_after(Duration::<u64, 1, 1000>::millis(10)).unwrap();
+        start_read::spawn_after(10.millis()).unwrap();
     }
 
     #[task(shared = [aht20])]
@@ -269,7 +270,7 @@ mod app {
             };
             if busy {
                 #[allow(clippy::unwrap_used)]
-                wait_calibrate::spawn_after(Duration::<u64, 1, 1000>::millis(10)).unwrap();
+                wait_calibrate::spawn_after(10.millis()).unwrap();
             } else {
                 #[allow(clippy::unwrap_used)]
                 calibrate::spawn().unwrap();
@@ -283,7 +284,7 @@ mod app {
         #[allow(clippy::unwrap_used)]
         aht20.lock(|aht20| aht20.start_read().unwrap());
         #[allow(clippy::unwrap_used)]
-        wait_read::spawn_after(Duration::<u64, 1, 1000>::millis(80)).unwrap();
+        wait_read::spawn_after(80.millis()).unwrap();
     }
 
     #[task(shared = [aht20])]
@@ -296,7 +297,7 @@ mod app {
             };
             if busy {
                 #[allow(clippy::unwrap_used)]
-                wait_read::spawn_after(Duration::<u64, 1, 1000>::millis(10)).unwrap();
+                wait_read::spawn_after(10.millis()).unwrap();
             } else {
                 #[allow(clippy::unwrap_used)]
                 end_read::spawn().unwrap();
@@ -323,7 +324,7 @@ mod app {
         #[allow(clippy::unwrap_used)]
         send_status::spawn().unwrap();
         #[allow(clippy::unwrap_used)]
-        start_read::spawn_after(Duration::<u64, 1, 1000>::secs(5)).unwrap();
+        start_read::spawn_after(5.secs()).unwrap();
     }
 
     #[task(shared = [relay, sensor])]
