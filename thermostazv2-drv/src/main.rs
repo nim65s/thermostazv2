@@ -109,34 +109,30 @@ async fn main() -> ThermostazvResult {
 
     let mut tasks = Vec::new();
 
-    tasks.push(task::spawn(async move {
-        serial_writer(to_uart_receive, uart_writer, shutdown_receiver).await
-    }));
+    tasks.push(task::spawn(serial_writer(
+        to_uart_receive,
+        uart_writer,
+        shutdown_receiver,
+    )));
     let shutdown_receiver = shutdown_sender.subscribe();
-    tasks.push(task::spawn(async move {
-        serial_reader(
-            uart_reader,
-            to_uart_send,
-            status_cmd_send,
-            to_mqtt_send,
-            shutdown_receiver,
-        )
-        .await
-    }));
+    tasks.push(task::spawn(serial_reader(
+        uart_reader,
+        to_uart_send,
+        status_cmd_send,
+        to_mqtt_send,
+        shutdown_receiver,
+    )));
 
     // mqtt receiver task
     let shutdown_receiver = shutdown_sender.subscribe();
-    tasks.push(task::spawn(async move {
-        mqtt_receive(
-            to_uart_send2,
-            from_mqtt_receive,
-            thermostazv_cmd_send,
-            status_watch_receive,
-            to_mqtt_send2,
-            shutdown_receiver,
-        )
-        .await
-    }));
+    tasks.push(task::spawn(mqtt_receive(
+        to_uart_send2,
+        from_mqtt_receive,
+        thermostazv_cmd_send,
+        status_watch_receive,
+        to_mqtt_send2,
+        shutdown_receiver,
+    )));
 
     client
         .subscribe("/azv/thermostazv/cmd", QoS::AtMostOnce)
@@ -153,15 +149,12 @@ async fn main() -> ThermostazvResult {
 
     // mqtt publisher task
     let shutdown_receiver = shutdown_sender.subscribe();
-    tasks.push(task::spawn(async move {
-        mqtt_publish(
-            to_mqtt_receive,
-            thermostazv_watch_receive,
-            client,
-            shutdown_receiver,
-        )
-        .await
-    }));
+    tasks.push(task::spawn(mqtt_publish(
+        to_mqtt_receive,
+        thermostazv_watch_receive,
+        client,
+        shutdown_receiver,
+    )));
 
     let client = influxdb2::Client::new(args.infl_url, args.infl_org, args.infl_token);
     let thermostazv_watch_receive = thermostazv_watch_send.subscribe();
@@ -188,13 +181,17 @@ async fn main() -> ThermostazvResult {
     );
     tasks.push(task::spawn(async move { tmanager.manage().await }));
     let shutdown_receiver = shutdown_sender.subscribe();
-    tasks.push(task::spawn(async move {
-        smanager(status_cmd_receive, status_watch_send, shutdown_receiver).await
-    }));
+    tasks.push(task::spawn(smanager(
+        status_cmd_receive,
+        status_watch_send,
+        shutdown_receiver,
+    )));
     let shutdown_receiver = shutdown_sender.subscribe();
-    tasks.push(task::spawn(async move {
-        mqtt_connection(connection, from_mqtt_send, shutdown_receiver).await
-    }));
+    tasks.push(task::spawn(mqtt_connection(
+        connection,
+        from_mqtt_send,
+        shutdown_receiver,
+    )));
 
     let shutdown_receiver = shutdown_sender.subscribe();
     main_task(&tasks, shutdown_receiver, shutdown_sender).await;
