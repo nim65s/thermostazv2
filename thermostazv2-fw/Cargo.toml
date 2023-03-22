@@ -7,9 +7,13 @@ edition = "2021"
 [dependencies]
 aht20 = { git = "https://github.com/nim65s/aht20" }
 cortex-m = { version = "0.7.7", features = ["critical-section-single-core"] }
+cortex-m-rtic = "1.1.4"
 panic-rtt-target = { version = "0.1.2", features = ["cortex-m"] }
 rtt-target = { version = "0.3.1", features = ["cortex-m"] }
 stm32f1xx-hal = { version = "0.9.0", features = ["rtic", "stm32f103", "rt", "stm32-usbd"] }
 thermostazv2-lib = { path = "../thermostazv2-lib" }
 usb-device = { version = "0.2.9" }
 usbd-serial = "0.1.1"
+
+[package.metadata.cargo-machete]
+ignored = ["cortex-m-rtic"]
