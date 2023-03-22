@@ -1,0 +1,15 @@
+[Unit]
+Description=Thermostazv2
+StartLimitIntervalSec=2
+
+[Service]
+Type=simple
+Restart=always
+RestartSec=5
+WorkingDirectory=/home/nim/thermostazv2
+User=nim
+ExecStart=/home/nim/.cargo/bin/thermostazv2-drv
+Environment=RUST_BACKTRACE=1
+
+[Install]
+WantedBy=multi-user.target
