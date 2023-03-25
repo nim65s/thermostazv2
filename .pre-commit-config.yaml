@@ -26,9 +26,9 @@ repos:
     rev: v1.0
     hooks:
     -   id: cargo-check
-        args: ["-p", "thermostazv2-fw", "--target", "thumbv7m-none-eabi"]
+        args: ["-p", "thermostazv2-stm32", "--target", "thumbv7m-none-eabi"]
     -   id: clippy
-        args: ["-p", "thermostazv2-fw", "--target", "thumbv7m-none-eabi", "--", "-W", "clippy::pedantic", "-W", "clippy::nursery", "-W", "clippy::unwrap_used", "-W", "clippy::expect_used"]
+        args: ["-p", "thermostazv2-stm32", "--target", "thumbv7m-none-eabi", "--", "-W", "clippy::pedantic", "-W", "clippy::nursery", "-W", "clippy::unwrap_used", "-W", "clippy::expect_used"]
 -   repo: https://github.com/doublify/pre-commit-rust
     rev: v1.0
     hooks:

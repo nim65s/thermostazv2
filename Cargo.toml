@@ -2,6 +2,7 @@
 
 members = [
     "thermostazv2-drv",
-    "thermostazv2-fw",
+    "thermostazv2-stm32",
+    "thermostazv2-esp32",
     "thermostazv2-lib",
 ]

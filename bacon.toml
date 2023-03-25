@@ -1,4 +1,4 @@
-default_job = "clippy-fw"
+default_job = "clippy-esp32"
 
 [jobs]
 
@@ -10,8 +10,12 @@ need_stdout = false
 command = ["just", "check-drv"]
 need_stdout = false
 
-[jobs.check-fw]
-command = ["just", "check-fw"]
+[jobs.check-stm32]
+command = ["just", "check-stm32"]
+need_stdout = false
+
+[jobs.check-esp32]
+command = ["just", "check-esp32"]
 need_stdout = false
 
 [jobs.check-lib]
@@ -22,8 +26,12 @@ need_stdout = false
 command = ["just", "clippy-drv"]
 need_stdout = false
 
-[jobs.clippy-fw]
-command = ["just", "clippy-fw"]
+[jobs.clippy-stm32]
+command = ["just", "clippy-stm32"]
+need_stdout = false
+
+[jobs.clippy-esp32]
+command = ["just", "clippy-esp32"]
 need_stdout = false
 
 [jobs.clippy-lib]
@@ -32,9 +40,11 @@ need_stdout = false
 
 [keybindings]
 t = "job:check-drv"
-s = "job:check-fw"
-r = "job:check-lib"
-n = "job:test"
+s = "job:check-stm32"
+r = "job:check-esp32"
+n = "job:check-lib"
+c = "job:test"
 shift-t = "job:clippy-drv"
-shift-s = "job:clippy-fw"
-shift-r = "job:clippy-lib"
+shift-s = "job:clippy-stm32"
+shift-r = "job:clippy-esp32"
+shift-n = "job:clippy-lib"
