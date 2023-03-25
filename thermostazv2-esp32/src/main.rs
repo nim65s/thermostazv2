@@ -50,13 +50,12 @@ fn main() -> ! {
 
     timer0.start(1u64.secs());
 
-    critical_section::with(|cs| SERIAL.borrow_ref_mut(cs).replace(serial0));
-
-    interrupt::enable(
+    if let Err(e) = interrupt::enable(
         peripherals::Interrupt::UART0,
         interrupt::Priority::Priority1,
-    )
-    .unwrap();
+    ) {
+        writeln!(serial0, "can't enable interrupts: {e:?}").ok();
+    }
     interrupt::set_kind(
         Cpu::ProCpu,
         interrupt::CpuInterrupt::Interrupt1, // Interrupt 1 handles priority one interrupts
@@ -67,19 +66,27 @@ fn main() -> ! {
         riscv::interrupt::enable();
     }
 
+    critical_section::with(|cs| SERIAL.borrow_ref_mut(cs).replace(serial0));
+
     loop {
         critical_section::with(|cs| {
-            writeln!(SERIAL.borrow_ref_mut(cs).as_mut().unwrap(), "Hello World! Send a single `#` character or send at least 30 characters and see the interrupts trigger.").ok();
+            let mut serial = SERIAL.borrow_ref_mut(cs);
+            #[allow(clippy::unwrap_used)]
+            let serial = serial.as_mut().unwrap();
+            writeln!(serial, "Hello World! Send a single `#` character or send at least 30 characters and see the interrupts trigger.").ok();
         });
 
         block!(timer0.wait()).unwrap();
     }
 }
 
+#[allow(clippy::semicolon_if_nothing_returned)]
+#[allow(clippy::inline_always)]
 #[interrupt]
 fn UART0() {
     critical_section::with(|cs| {
         let mut serial = SERIAL.borrow_ref_mut(cs);
+        #[allow(clippy::unwrap_used)]
         let serial = serial.as_mut().unwrap();
 
         let mut cnt = 0;
